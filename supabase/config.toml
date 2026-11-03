@@ -1,0 +1,8 @@
+[auth.email.template.confirmation]
+subject = "Welcome to Dr. Beauty — confirm your email"
+content_path = "./supabase/templates/confirmation.html"
+
+[functions.notification-email-worker]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/notification-email-worker/index.js"
