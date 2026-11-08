@@ -134,7 +134,7 @@ export async function getAdminCategories() {
   if (access.status !== "authorized") return { data: null, error: "Admin access or database configuration is unavailable." };
   const { data, error } = await access.supabase
     .from("categories")
-    .select("id,name,slug,description,sort_order,is_active,created_at")
+    .select("id,name,slug,description,image_url,sort_order,is_active,created_at")
     .order("sort_order", { ascending: true })
     .order("name", { ascending: true });
   if (error) return { data: null, error: "Categories could not be loaded. Check that the admin migration is applied and the database is configured." };
@@ -146,7 +146,7 @@ export async function getAdminPromotions() {
   if (access.status !== "authorized") return { data: null, error: "Admin access or database configuration is unavailable." };
   const { data, error } = await access.supabase
     .from("promotions")
-    .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
+    .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
     .order("created_at", { ascending: false });
   if (error) return { data: null, error: "Discount codes could not be loaded. Check the promotions table and admin access." };
   return { data: data ?? [], error: null };

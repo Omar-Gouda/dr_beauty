@@ -19,9 +19,9 @@ const legalLinks = [
   { href: "/privacy", label: "Privacy Policy" },
 ];
 
-export default function Footer({ mobileOnly = false }) {
+export default function Footer({ mobileOnly = false, desktopOnly = false }) {
   return (
-    <footer className={`mt-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] ${mobileOnly ? "lg:hidden" : ""}`}>
+    <footer className={`mt-auto border-t border-[var(--color-border)] bg-[var(--color-surface)] ${mobileOnly ? "lg:hidden" : desktopOnly ? "hidden lg:block" : ""}`}>
       <div className={mobileOnly ? "hidden" : "hidden lg:block"}>
       <Container>
         <div className="grid gap-8 py-12 sm:grid-cols-2 lg:grid-cols-3">

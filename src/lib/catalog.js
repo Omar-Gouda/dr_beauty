@@ -137,6 +137,7 @@ function mapCategory(row) {
     slug: row.slug,
     name: row.name,
     description: row.description ?? "",
+    imageUrl: row.image_url ?? null,
     sortOrder: row.sort_order,
   };
 }
@@ -153,7 +154,7 @@ export async function getCatalogCategories() {
 
     const { data, error } = await supabase
       .from("categories")
-      .select("id,slug,name,description,sort_order")
+      .select("id,slug,name,description,image_url,sort_order")
       .eq("is_active", true)
       .order("sort_order", { ascending: true })
       .order("name", { ascending: true });
@@ -313,7 +314,7 @@ export async function getCatalogCategoryBySlug(slug) {
 
     const { data, error } = await supabase
       .from("categories")
-      .select("id,slug,name,description,sort_order")
+      .select("id,slug,name,description,image_url,sort_order")
       .eq("slug", slug)
       .eq("is_active", true)
       .maybeSingle();

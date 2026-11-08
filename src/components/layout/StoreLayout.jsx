@@ -19,17 +19,17 @@ function AnnouncementFallback() {
   return <AnnouncementBar loading announcements={[]} />;
 }
 
-export default function StoreLayout({ children }) {
+export default function StoreLayout({ children, desktopChromeOnly = false }) {
   return (
-    <div className="flex min-h-screen flex-col pb-[calc(var(--mobile-bottom-nav-height)+env(safe-area-inset-bottom))] md:pb-0">
+    <div className={desktopChromeOnly ? "flex flex-col lg:min-h-screen" : "flex min-h-screen flex-col pb-[calc(var(--mobile-bottom-nav-height)+env(safe-area-inset-bottom))] md:pb-0"}>
       <Suspense fallback={<AnnouncementFallback />}><CurrentAnnouncements /></Suspense>
 
-      <Navbar />
+      <Navbar desktopOnly={desktopChromeOnly} />
 
       <div className="flex-1">{children}</div>
 
-      <Footer />
-      <MobileBottomNavigation />
+      <Footer desktopOnly={desktopChromeOnly} />
+      {!desktopChromeOnly && <MobileBottomNavigation />}
     </div>
   );
 }

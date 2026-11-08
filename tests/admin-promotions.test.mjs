@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("promotion management uses the existing admin check and schema-backed fields", async () => {
-  const [actions, schema, sidebar, page, manager] = await Promise.all([
+  const [actions, schema, sidebar, page, manager, adminData] = await Promise.all([
     readFile(new URL("../src/app/admin/actions.js", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20261021000000_initial_schema.sql", import.meta.url), "utf8"),
     readFile(new URL("../src/components/admin/AdminSidebar.jsx", import.meta.url), "utf8"),
     readFile(new URL("../src/app/admin/promotions/page.js", import.meta.url), "utf8"),
     readFile(new URL("../src/components/admin/AdminPromotionsManager.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/admin.js", import.meta.url), "utf8"),
   ]);
   assert.match(actions, /export async function savePromotion/);
   assert.match(actions, /export async function setPromotionActive/);
@@ -21,6 +22,23 @@ test("promotion management uses the existing admin check and schema-backed field
   assert.match(page, /getAdminPromotions/);
   assert.match(manager, /@\/components\/ui\/Select/);
   assert.doesNotMatch(manager, /<select\b/i);
+});
+
+test("per-account promotion limits are loaded, validated, and configurable separately from the global cap", async () => {
+  const [actions, adminData, manager, migration] = await Promise.all([
+    readFile(new URL("../src/app/admin/actions.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/admin.js", import.meta.url), "utf8"),
+    readFile(new URL("../src/components/admin/AdminPromotionsManager.jsx", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/20261120000000_order_retention_deletion_redemption_ledger.sql", import.meta.url), "utf8"),
+  ]);
+  assert.match(migration, /per_account_redemption_limit integer default 1/i);
+  assert.match(adminData, /maximum_redemptions,per_account_redemption_limit/);
+  assert.match(actions, /perAccountRedemptionLimit[\s\S]*?Number\.isSafeInteger\(perAccountRedemptionLimit\)/);
+  assert.match(actions, /typeof rawPerAccountRedemptionLimit === "string"[\s\S]*?Number\.NaN/);
+  assert.match(actions, /per_account_redemption_limit: perAccountRedemptionLimit/);
+  assert.match(manager, /name="perAccountRedemptionLimit"/);
+  assert.match(manager, /Leave blank for unlimited uses per account/i);
+  assert.match(manager, /per_account_redemption_limit == null \? "Unlimited per account"/);
 });
 
 test("featured offers use the public eligibility projection and local storefront destinations", async () => {

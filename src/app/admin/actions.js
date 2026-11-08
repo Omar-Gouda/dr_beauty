@@ -10,6 +10,7 @@ import {
 import { persistAdminOrderDiagnostic } from "@/lib/admin-order-diagnostics.server.mjs";
 import { buildWhatsAppClickToChatUrl, normalizeWhatsAppPhoneNumber } from "@/lib/whatsapp/messages.mjs";
 import { validateProductPricing } from "@/lib/products/pricing.mjs";
+import { isSafeExternalImageUrl, normalizeCategoryInput } from "@/lib/image-url.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -23,25 +24,12 @@ function text(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-function isSafeHttpsImageUrl(value) {
-  try {
-    const url = new URL(value);
-    const host = url.hostname.toLowerCase();
-    return url.protocol === "https:" && !url.username && !url.password &&
-      host !== "localhost" && !host.endsWith(".localhost") && !host.endsWith(".local") &&
-      !host.endsWith(".internal") && !host.startsWith("[") &&
-      !/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host);
-  } catch {
-    return false;
-  }
-}
-
 function safeImageReferences(images) {
   if (!Array.isArray(images) || images.length < 1 || images.length > 10) return null;
   const references = images.map((image) => typeof image === "string" ? image.trim() : "");
   if (references.some((reference) => reference.length > 2048 ||
       (!(/^\/images\/[a-zA-Z0-9/_-]+\.(?:avif|gif|jpe?g|png|webp)$/i.test(reference) && !reference.includes("..")) &&
-        !isSafeHttpsImageUrl(reference)))) return null;
+        !isSafeExternalImageUrl(reference)))) return null;
   return references;
 }
 
@@ -124,28 +112,56 @@ export async function setProductActive(productId, isActive) {
 export async function saveCategory(input) {
   const supabase = await authorizedClient();
   if (!supabase) return { ok: false, message: "Admin access is unavailable." };
-  if (!input || typeof input !== "object") return { ok: false, message: "Invalid category details." };
-  const id = input.id ? text(input.id, 36) : null;
-  const name = text(input.name, 120);
-  const slug = slugify(text(input.slug || name, 120));
-  const sortOrder = Number(input.sortOrder);
-  if ((id && !UUID_PATTERN.test(id)) || name.length < 1 || !SLUG_PATTERN.test(slug) ||
-      !Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 100000) {
-    return { ok: false, message: "Enter a valid category name, slug, and order." };
+  const id = input && typeof input === "object" && input.id ? text(input.id, 36) : null;
+  if ((id && !UUID_PATTERN.test(id)) || !input || typeof input !== "object") {
+    return { ok: false, message: "Invalid category details." };
   }
-  const values = {
-    name, slug, sort_order: sortOrder,
-    description: text(input.description, 2000) || null,
-    is_active: input.isActive === true,
-  };
-  const result = id
-    ? await supabase.from("categories").update(values).eq("id", id).select("id").maybeSingle()
-    : await supabase.from("categories").insert(values).select("id").single();
-  if (result.error || !result.data) return { ok: false, message: "Category could not be saved. Check its slug and database constraints." };
+  const normalized = normalizeCategoryInput(input);
+  if (!normalized.ok) {
+    return { ok: false, message: normalized.reason === "image"
+      ? "Enter a valid public HTTPS image URL, or leave it empty to use the existing category artwork."
+      : "Enter a valid category name, slug, description, visibility, and display order." };
+  }
+  let result;
+  try {
+    result = id
+      ? await supabase.from("categories").update(normalized.value).eq("id", id).select("id").maybeSingle()
+      : await supabase.from("categories").insert(normalized.value).select("id").single();
+  } catch {
+    return { ok: false, message: "Category could not be saved. Please try again." };
+  }
+  if (result.error?.code === "23505") {
+    return { ok: false, message: "That category slug is already in use. Choose a different slug." };
+  }
+  if (result.error || !result.data) return { ok: false, message: "Category could not be saved. Check its details and try again." };
   revalidatePath("/admin");
   revalidatePath("/admin/categories");
   revalidatePath("/shop");
+  revalidatePath("/");
   return { ok: true, message: id ? "Category updated." : "Category created." };
+}
+
+export async function deleteCategory(categoryId) {
+  const supabase = await authorizedClient();
+  if (!supabase) return { ok: false, message: "Admin access is unavailable." };
+  if (!UUID_PATTERN.test(String(categoryId ?? ""))) return { ok: false, message: "Choose a valid category." };
+
+  let result;
+  try {
+    result = await supabase.from("categories").delete().eq("id", categoryId).select("id").maybeSingle();
+  } catch {
+    return { ok: false, message: "Category could not be deleted. Please try again." };
+  }
+  if (result.error?.code === "23503") {
+    return { ok: false, message: "This category is still used by one or more products. Move those products to another category before deleting it." };
+  }
+  if (result.error || !result.data) return { ok: false, message: "Category could not be deleted. It may no longer exist." };
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/categories");
+  revalidatePath("/shop");
+  revalidatePath("/");
+  return { ok: true, message: "Category deleted." };
 }
 
 export async function setCategoryActive(categoryId, isActive) {
@@ -188,6 +204,16 @@ export async function savePromotion(input) {
   const maximumDiscount = input.maximumDiscount === "" || input.maximumDiscount == null ? null : String(input.maximumDiscount).trim();
   const minimumSubtotal = typeof input.minimumSubtotal === "string" ? input.minimumSubtotal.trim() : "";
   const maximumRedemptions = input.maximumRedemptions === "" || input.maximumRedemptions == null ? null : Number(input.maximumRedemptions);
+  const rawPerAccountRedemptionLimit = input.perAccountRedemptionLimit;
+  const perAccountRedemptionLimit = rawPerAccountRedemptionLimit === undefined
+    ? 1
+    : rawPerAccountRedemptionLimit === "" || rawPerAccountRedemptionLimit === null
+      ? null
+      : typeof rawPerAccountRedemptionLimit === "number"
+        ? rawPerAccountRedemptionLimit
+        : typeof rawPerAccountRedemptionLimit === "string" && /^\d+$/.test(rawPerAccountRedemptionLimit.trim())
+          ? Number(rawPerAccountRedemptionLimit)
+          : Number.NaN;
   const isFeatured = input.isFeatured === true;
   const isAnnouncement = input.isAnnouncement === true;
   const displayPriority = input.displayPriority === "" || input.displayPriority == null ? 0 : Number(input.displayPriority);
@@ -206,6 +232,7 @@ export async function savePromotion(input) {
       !decimal(discountValue) || (discountType === "percentage" && Number(discountValue) > 100) ||
       (maximumDiscount !== null && !decimal(maximumDiscount)) || !decimal(minimumSubtotal, true) ||
       (maximumRedemptions !== null && (!Number.isSafeInteger(maximumRedemptions) || maximumRedemptions < 1 || maximumRedemptions > 2147483647)) ||
+      (perAccountRedemptionLimit !== null && (!Number.isSafeInteger(perAccountRedemptionLimit) || perAccountRedemptionLimit < 1 || perAccountRedemptionLimit > 2147483647)) ||
       startsAt === undefined || endsAt === undefined || (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) ||
       typeof input.isActive !== "boolean") {
     return { ok: false, message: "Check the code, discount amount, limits, and date range." };
@@ -222,6 +249,7 @@ export async function savePromotion(input) {
     starts_at: startsAt,
     ends_at: endsAt,
     maximum_redemptions: maximumRedemptions,
+    per_account_redemption_limit: perAccountRedemptionLimit,
     is_active: input.isActive,
     is_featured: isFeatured,
     display_priority: displayPriority,
@@ -229,7 +257,7 @@ export async function savePromotion(input) {
     is_announcement: isAnnouncement,
     announcement_priority: announcementPriority,
   };
-  const savedPromotionFields = "id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,starts_at,ends_at,target_path,is_active,is_featured";
+  const savedPromotionFields = "id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,per_account_redemption_limit,starts_at,ends_at,target_path,is_active,is_featured";
   const result = id
     ? await supabase.from("promotions").update(values).eq("id", id).select(savedPromotionFields).maybeSingle()
     : await supabase.from("promotions").insert(values).select(savedPromotionFields).single();

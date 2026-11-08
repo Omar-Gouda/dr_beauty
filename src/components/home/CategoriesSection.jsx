@@ -1,8 +1,8 @@
 import Link from "next/link";
-import Image from "next/image";
 import Container from "@/components/ui/Container";
 import SectionHeading from "@/components/ui/SectionHeading";
 import { categoryImages, fallbackCategoryImage } from "@/data/categoryImages";
+import ImageWithFallback from "@/components/ui/ImageWithFallback";
 
 export default function CategoriesSection({ categories, error }) {
   return (
@@ -29,7 +29,7 @@ export default function CategoriesSection({ categories, error }) {
         ) : (
           <div className="flex min-w-0 flex-wrap justify-center gap-y-4 sm:gap-y-5 md:gap-y-6 lg:grid lg:grid-cols-7 lg:gap-6">
             {categories.map((category) => {
-              const image = categoryImages[category.slug] ?? fallbackCategoryImage;
+              const image = category.imageUrl || categoryImages[category.slug] || fallbackCategoryImage;
               return (
                 <Link
                   key={category.id}
@@ -37,11 +37,12 @@ export default function CategoriesSection({ categories, error }) {
                   className="group flex basis-1/4 min-w-0 flex-col items-center text-center md:basis-1/5 lg:basis-auto"
                 >
                   <div className="relative mb-1.5 h-16 w-16 shrink-0 overflow-hidden rounded-full border-2 border-[var(--color-border)] bg-[var(--color-primary-light)] shadow-sm transition-transform duration-300 group-hover:scale-105 sm:mb-3 sm:h-20 sm:w-20 md:h-24 md:w-24 lg:h-36 lg:w-36">
-                    <Image
+                    <ImageWithFallback
                       src={image}
+                      fallbackSrc={categoryImages[category.slug] ?? fallbackCategoryImage}
                       alt={category.name}
                       fill
-                      unoptimized={!image.startsWith("/")}
+                      sizes="(max-width: 640px) 25vw, (max-width: 1024px) 20vw, 10rem"
                       className="object-cover transition-transform duration-300 group-hover:scale-110"
                     />
                     <div className="absolute inset-0 bg-black/10 transition-colors group-hover:bg-black/0" />

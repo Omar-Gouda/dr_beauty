@@ -54,6 +54,7 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
       startsAt: utcIsoValue(String(form.get("startsAt") ?? "")),
       endsAt: utcIsoValue(String(form.get("endsAt") ?? "")),
       maximumRedemptions: String(form.get("maximumRedemptions") ?? ""),
+      perAccountRedemptionLimit: String(form.get("perAccountRedemptionLimit") ?? "1"),
       isFeatured: form.get("isFeatured") === "on",
       displayPriority: String(form.get("displayPriority") ?? "0"),
       isAnnouncement: form.get("isAnnouncement") === "on",
@@ -176,7 +177,7 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-3 text-xs">
               <div><dt className="text-[var(--color-text-secondary)]">Discount</dt><dd className="mt-1 font-semibold">{promotion.discount_type === "percentage" ? `${promotion.discount_value}%` : `EGP ${Number(promotion.discount_value).toFixed(2)}`}{promotion.maximum_discount != null && <span className="block font-normal text-[var(--color-text-secondary)]">Maximum EGP {Number(promotion.maximum_discount).toFixed(2)}</span>}</dd></div>
-              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">Minimum EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited uses" : `Up to ${promotion.maximum_redemptions} uses`}</span></dd></div>
+              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">Minimum EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</span><span className="block text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Schedule</dt><dd className="mt-1">{promotion.starts_at ? new Date(promotion.starts_at).toLocaleString("en-EG", { timeZone: "UTC" }) : "No start"}<span className="block">{promotion.ends_at ? `Until ${new Date(promotion.ends_at).toLocaleString("en-EG", { timeZone: "UTC" })} UTC` : "No expiry"}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Storefront</dt><dd className="mt-1">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}<span className="block">{promotion.is_featured ? `Featured · priority ${promotion.display_priority}` : "Not featured"}</span></dd></div>
             </dl>
@@ -199,6 +200,7 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
           <label className="block text-xs font-semibold">Maximum discount (optional, EGP)<input name="maximumDiscount" inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0.01" step="0.01" defaultValue={editing?.maximum_discount ?? ""} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Minimum subtotal (EGP)<input name="minimumSubtotal" required inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0" step="0.01" defaultValue={editing?.minimum_subtotal ?? "0"} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Maximum redemptions (optional)<input name="maximumRedemptions" type="number" min="1" step="1" defaultValue={editing?.maximum_redemptions ?? ""} className={inputClass} /></label>
+          <label className="block text-xs font-semibold">Maximum uses per account<input name="perAccountRedemptionLimit" type="number" min="1" step="1" defaultValue={editing ? (editing.per_account_redemption_limit ?? "") : "1"} className={inputClass} /><span className="mt-1 block font-normal text-[var(--color-text-secondary)]">Default is 1. Leave blank for unlimited uses per account.</span></label>
           <label className="block text-xs font-semibold">Starts at (optional, UTC)<input name="startsAt" type="datetime-local" defaultValue={utcInputValue(editing?.starts_at)} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Expires at (optional, UTC)<input name="endsAt" type="datetime-local" defaultValue={utcInputValue(editing?.ends_at)} className={inputClass} /></label>
         </div>

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { getSiteUrl } from "@/lib/site-url.mjs";
 
-function redirectTo(request, path) {
-  return NextResponse.redirect(new URL(path, request.url));
+function redirectTo(path) {
+  return NextResponse.redirect(new URL(path, getSiteUrl()));
 }
 
 async function persistSignupPhone(supabase) {
@@ -26,7 +27,7 @@ async function persistSignupPhone(supabase) {
 
 export async function GET(request) {
   if (getMissingSupabaseEnv().length) {
-    return redirectTo(request, "/login?notice=confirmation-failed");
+    return redirectTo("/login?notice=confirmation-failed");
   }
 
   const url = new URL(request.url);
@@ -37,23 +38,23 @@ export async function GET(request) {
 
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) return redirectTo(request, "/login?notice=confirmation-failed");
+    if (error) return redirectTo("/login?notice=confirmation-failed");
 
     const next = url.searchParams.get("next");
-    if (next === "/reset-password") return redirectTo(request, "/reset-password");
+    if (next === "/reset-password") return redirectTo("/reset-password");
     const phoneSaved = await persistSignupPhone(supabase);
-    if (!phoneSaved) return redirectTo(request, "/profile?notice=profile-incomplete");
-    return redirectTo(request, "/profile?notice=welcome");
+    if (!phoneSaved) return redirectTo("/profile?notice=profile-incomplete");
+    return redirectTo("/profile?notice=welcome");
   }
 
   if (tokenHash && ["signup", "email", "recovery"].includes(type)) {
     const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
-    if (error) return redirectTo(request, "/login?notice=confirmation-failed");
-    if (type === "recovery") return redirectTo(request, "/reset-password");
+    if (error) return redirectTo("/login?notice=confirmation-failed");
+    if (type === "recovery") return redirectTo("/reset-password");
     const phoneSaved = await persistSignupPhone(supabase);
-    if (!phoneSaved) return redirectTo(request, "/profile?notice=profile-incomplete");
-    return redirectTo(request, "/profile?notice=welcome");
+    if (!phoneSaved) return redirectTo("/profile?notice=profile-incomplete");
+    return redirectTo("/profile?notice=welcome");
   }
 
-  return redirectTo(request, "/login?notice=confirmation-failed");
+  return redirectTo("/login?notice=confirmation-failed");
 }

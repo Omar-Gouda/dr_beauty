@@ -10,7 +10,7 @@ import { useWishlist } from "@/constants/WishlistContext";
 import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
-export default function Navbar({ mobileOnly = false }) {
+export default function Navbar({ mobileOnly = false, desktopOnly = false }) {
   const { totalItems } = useCart();
   const { wishlistItems } = useWishlist();
   const [authenticated, setAuthenticated] = useState(null);
@@ -48,7 +48,7 @@ export default function Navbar({ mobileOnly = false }) {
   const accountHref = mobileOnly ? "/profile" : authenticated ? "/profile" : authenticated === false ? "/login" : "/profile";
   const accountLabel = mobileOnly ? "Account" : authenticated ? "My account" : authenticated === false ? "Sign in" : "Account";
   return (
-    <header className={`relative z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)] ${mobileOnly ? "lg:hidden" : ""}`}>
+    <header className={`relative z-40 border-b border-[var(--color-border)] bg-[var(--color-surface)] ${mobileOnly ? "lg:hidden" : desktopOnly ? "hidden lg:block" : ""}`}>
       <div className={mobileOnly ? "hidden" : "hidden lg:block"}>
       <Container>
         <div className="flex min-h-20 items-center justify-between gap-4">

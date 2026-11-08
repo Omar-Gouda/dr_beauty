@@ -1,9 +1,9 @@
 "use server";
 
-import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { getAuthCallbackUrl } from "@/lib/site-url.mjs";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -67,47 +67,6 @@ function hasSafeNext(value) {
   }
 }
 
-async function getAppOrigin() {
-  const configuredSiteUrl = process.env.NEXT_PUBLIC_SITE_URL;
-  if (configuredSiteUrl) {
-    try {
-      const configuredUrl = new URL(configuredSiteUrl);
-      if (configuredUrl.protocol === "https:" || configuredUrl.hostname === "localhost") {
-        return configuredUrl.origin;
-      }
-    } catch {
-      // Fall back to the validated request origin below.
-    }
-  }
-
-  const requestHeaders = await headers();
-  const originHeader = requestHeaders.get("origin");
-  const expectedHost = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host");
-
-  if (originHeader && expectedHost) {
-    try {
-      const originUrl = new URL(originHeader);
-      if (
-        (originUrl.protocol === "https:" || originUrl.hostname === "localhost") &&
-        originUrl.host === expectedHost
-      ) {
-        return originUrl.origin;
-      }
-    } catch {
-      // Use the local fallback when the request origin is not valid.
-    }
-  }
-
-  return "http://localhost:3000";
-}
-
-async function callbackUrl(next) {
-  const origin = await getAppOrigin();
-  const url = new URL("/auth/confirm", origin);
-  url.searchParams.set("next", next);
-  return url.toString();
-}
-
 export async function login(_previousState, formData) {
   const configurationMessage = missingConfigurationMessage();
   if (configurationMessage) return { error: configurationMessage };
@@ -157,7 +116,12 @@ export async function register(_previousState, formData) {
   if (password !== passwordConfirmation) return { error: "The passwords do not match." };
 
   const supabase = await createClient();
-  const emailRedirectTo = await callbackUrl("/profile");
+  let emailRedirectTo;
+  try {
+    emailRedirectTo = getAuthCallbackUrl("/profile");
+  } catch {
+    return { error: "Registration is temporarily unavailable. Please try again later." };
+  }
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
@@ -199,9 +163,15 @@ export async function requestPasswordReset(_previousState, formData) {
   const email = readText(formData, "email").toLowerCase();
   if (!validEmail(email)) return { error: "Enter a valid email address." };
 
+  let redirectTo;
+  try {
+    redirectTo = getAuthCallbackUrl("/reset-password");
+  } catch {
+    return { error: "Password reset is temporarily unavailable. Please try again later." };
+  }
+
   try {
     const supabase = await createClient();
-    const redirectTo = await callbackUrl("/reset-password");
     await supabase.auth.resetPasswordForEmail(email, { redirectTo });
   } catch {
     // Keep the response the same for existing and unknown addresses.
