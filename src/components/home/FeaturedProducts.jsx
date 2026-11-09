@@ -15,6 +15,8 @@ import { checkProductAvailability } from "@/app/(store)/products/actions";
 import { addAvailableProductToCart, isProductAvailableForPurchase } from "@/lib/products/cart-availability.mjs";
 import WhatsAppAction from "@/components/whatsapp/WhatsAppAction";
 import ProductPrice from "@/components/products/ProductPrice";
+import ProductStockBadge from "@/components/products/ProductStockBadge";
+import { getProductImageStateClass } from "@/lib/products/product-image-state.mjs";
 
 export default function FeaturedProducts({ products, error }) {
   const { addToCart } = useCart();
@@ -63,7 +65,7 @@ export default function FeaturedProducts({ products, error }) {
             {products.map((product) => (
               <div
                 key={product.id}
-                className={`group relative flex min-w-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-3 transition-all hover:shadow-md sm:p-4 ${product.inStock === false ? "opacity-70" : ""}`}
+                className="group relative flex min-w-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-3 transition-all hover:shadow-md sm:p-4"
               >
                 <button
                   type="button"
@@ -84,9 +86,10 @@ export default function FeaturedProducts({ products, error }) {
                     alt={product.name}
                     fill
                     unoptimized={!(product.images[0] ?? fallbackCategoryImage).startsWith("/")}
-                    className={`transition-transform duration-300 group-hover:scale-105 ${product.images?.length ? "object-contain p-2" : "object-cover"}`}
+                    className={`object-cover transition-[filter,transform] duration-300 group-hover:scale-105 ${getProductImageStateClass(product.inStock)}`}
+                    style={{ objectPosition: product.imagePositions?.[0] ?? "50% 50%" }}
                   />
-                  {product.inStock === false && <span className="absolute bottom-3 left-3 rounded-full bg-[var(--color-text)] px-3 py-1.5 text-[10px] font-semibold text-white">Out of Stock</span>}
+                  <ProductStockBadge inStock={product.inStock} className="absolute bottom-3 left-3" />
                 </Link>
 
                 <div className="flex flex-1 flex-col">

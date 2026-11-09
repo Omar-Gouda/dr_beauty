@@ -78,8 +78,8 @@ test("discount sharing uses saved active discount data and manual WhatsApp workf
     read("../src/components/admin/AdminPromotionsManager.jsx"),
     read("../src/lib/whatsapp/messages.mjs"),
   ]);
-  assert.match(actions, /select\(savedPromotionFields\)/);
-  assert.match(actions, /savedPromotion: result\.data\.is_active \? result\.data : null/);
+  assert.match(actions, /rpc\("save_admin_promotion"/);
+  assert.match(actions, /savedPromotion: savedPromotion\.is_active \? savedPromotion : null/);
   assert.match(manager, /if \(result\.savedPromotion\) setSharePromotion\(result\.savedPromotion\)/);
   assert.match(manager, /navigator\.clipboard\.writeText\(shareMessage\)/);
   assert.match(manager, /Copy discount message/);

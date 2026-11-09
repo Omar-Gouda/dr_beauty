@@ -18,12 +18,14 @@ const comparePriceFunction = comparePriceMigration.split("as $$")[1]?.split("$$;
 
 test("product creation and editing use one atomic save RPC", () => {
   assert.ok(saveProductAction);
-  assert.match(saveProductAction, /supabase\.rpc\("save_admin_product_with_compare_at"/);
+  assert.match(saveProductAction, /supabase\.rpc\("save_admin_product_with_image_focal_points"/);
   assert.doesNotMatch(saveProductAction, /\.from\("(?:brands|products|product_inventory|product_images)"\)/);
   assert.match(saveProductAction, /p_product_id: id/);
   assert.match(saveProductAction, /p_is_active: input\.isActive === true/);
   assert.match(saveProductAction, /p_is_bestseller: input\.isBestseller === true/);
   assert.match(saveProductAction, /p_compare_at_price: pricing\.compareAtPrice/);
+  assert.match(saveProductAction, /p_image_urls: images\.map\(\(image\) => image\.url\)/);
+  assert.match(saveProductAction, /p_image_focal_points: images\.map/);
 });
 
 test("the RPC is admin-authorized and unavailable to public execution roles", () => {
@@ -73,7 +75,8 @@ test("editing retains the supplied product ID and failures are not reported as s
   assert.match(saveFunction, /where product\.id = p_product_id/);
   assert.match(saveFunction, /if not found then[\s\S]*?The product to edit was not found/);
   assert.match(saveProductAction, /if \(error \|\| typeof data !== "string" \|\| !UUID_PATTERN\.test\(data\)\)/);
-  assert.match(saveProductAction, /catch \{/);
+  assert.match(saveProductAction, /catch \(caughtError\)/);
+  assert.match(saveProductAction, /logProductDatabaseFailure\("save", caughtError\)/);
   assert.match(saveProductAction, /revalidatePath\("\/admin\/products"\)/);
 });
 

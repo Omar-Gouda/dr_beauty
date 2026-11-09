@@ -72,8 +72,8 @@ export default function Navbar({ mobileOnly = false, desktopOnly = false }) {
                 <span className="truncate font-editorial text-2xl font-bold tracking-normal text-[var(--color-text)]">
                   Dr. Beauty
                 </span>
-                <span className="text-[8.5px] font-normal uppercase tracking-widest text-[var(--color-text-secondary)]">
-                  by DR. Radwa Hassan
+                <span className="text-[8.5px] font-normal tracking-widest text-[var(--color-text-secondary)]">
+                  by Dr. Radwa Hassan
                 </span>
               </div>
             </Link>
@@ -135,7 +135,10 @@ export default function Navbar({ mobileOnly = false, desktopOnly = false }) {
           <div className="flex min-h-16 items-center justify-between gap-3">
             <Link href="/" aria-label="Dr. Beauty - Home" className="flex min-w-0 items-center gap-2 text-[var(--color-text)]">
               <Image src="/icons/svg/logo-SVG/logo-SVG.svg" alt="" width={32} height={32} className="h-8 w-8 shrink-0" />
-              <span className="truncate font-editorial text-xl font-bold">Dr. Beauty</span>
+              <span className="flex min-w-0 flex-col leading-tight">
+                <span className="truncate font-editorial text-lg font-bold">DR. Beauty</span>
+                <span className="truncate text-[9px] font-medium tracking-wide text-[var(--color-text-secondary)]">by Dr. Radwa Hassan</span>
+              </span>
             </Link>
             <div className="flex shrink-0 items-center gap-2">
               <button

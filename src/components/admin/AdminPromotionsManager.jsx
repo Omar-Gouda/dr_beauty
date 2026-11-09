@@ -6,12 +6,29 @@ import { Edit, Plus } from "lucide-react";
 import Button from "@/components/ui/Button";
 import AccessibleDialog from "@/components/ui/AccessibleDialog";
 import CustomSelect from "@/components/ui/Select";
+import PromotionTargetPicker from "@/components/admin/PromotionTargetPicker";
 import { useToast } from "@/constants/ToastContext";
 import { savePromotion, saveShippingSettings, setPromotionActive } from "@/app/admin/actions";
 import { buildDiscountCommunityMessage } from "@/lib/whatsapp/messages.mjs";
 
 const inputClass = "mt-1 min-h-12 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-sm text-[var(--color-text)] outline-none focus-visible:border-[var(--color-rose)] focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]/20";
 const WHATSAPP_WEB_URL = "https://web.whatsapp.com/";
+
+function formatRedemptionCount(value) {
+  const count = String(value ?? 0);
+  return /^\d+$/.test(count) ? count : "0";
+}
+
+function RedemptionCounts({ promotion }) {
+  const counts = promotion.redemption_counts ?? {};
+  return (
+    <div className="mt-2 space-y-0.5 text-[10px] text-[var(--color-text-secondary)]" aria-label={`Redemption history for ${promotion.code}`}>
+      <p>Records: {formatRedemptionCount(counts.total_records)} · capacity counted: {formatRedemptionCount(counts.capacity_count)}</p>
+      <p>Reserved {formatRedemptionCount(counts.reserved_count)} · Redeemed {formatRedemptionCount(counts.redeemed_count)}</p>
+      <p>Cancelled {formatRedemptionCount(counts.cancelled_count)} · Refunded {formatRedemptionCount(counts.refunded_count)} · Released {formatRedemptionCount(counts.released_count)}</p>
+    </div>
+  );
+}
 
 function utcInputValue(value) {
   return value ? new Date(value).toISOString().slice(0, 16) : "";
@@ -21,9 +38,12 @@ function utcIsoValue(value) {
   return value ? `${value}:00.000Z` : "";
 }
 
-export default function AdminPromotionsManager({ promotions, shippingSettings }) {
+export default function AdminPromotionsManager({ promotions, productOptions = [], categoryOptions = [], shippingSettings }) {
   const [editing, setEditing] = useState(null);
   const [discountType, setDiscountType] = useState("percentage");
+  const [applicationScope, setApplicationScope] = useState("order");
+  const [productTargetIds, setProductTargetIds] = useState([]);
+  const [categoryTargetIds, setCategoryTargetIds] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
   const [sharePromotion, setSharePromotion] = useState(null);
   const [shareFeedback, setShareFeedback] = useState("");
@@ -55,6 +75,10 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
       endsAt: utcIsoValue(String(form.get("endsAt") ?? "")),
       maximumRedemptions: String(form.get("maximumRedemptions") ?? ""),
       perAccountRedemptionLimit: String(form.get("perAccountRedemptionLimit") ?? "1"),
+      firstPurchaseOnly: form.get("firstPurchaseOnly") === "on",
+      applicationScope,
+      productTargetIds: ["products", "product_and_category"].includes(applicationScope) ? productTargetIds : [],
+      categoryTargetIds: ["categories", "product_and_category"].includes(applicationScope) ? categoryTargetIds : [],
       isFeatured: form.get("isFeatured") === "on",
       displayPriority: String(form.get("displayPriority") ?? "0"),
       isAnnouncement: form.get("isAnnouncement") === "on",
@@ -86,6 +110,24 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
       showToast(result.message, result.ok ? "success" : "error");
       if (result.ok) router.refresh();
     });
+  }
+
+  function openNewPromotion() {
+    setEditing(null);
+    setDiscountType("percentage");
+    setApplicationScope("order");
+    setProductTargetIds([]);
+    setCategoryTargetIds([]);
+    setIsOpen(true);
+  }
+
+  function openEditPromotion(promotion) {
+    setEditing(promotion);
+    setDiscountType(promotion.discount_type);
+    setApplicationScope(promotion.application_scope ?? "order");
+    setProductTargetIds(promotion.product_target_ids ?? []);
+    setCategoryTargetIds(promotion.category_target_ids ?? []);
+    setIsOpen(true);
   }
 
   function submitShipping(event) {
@@ -144,7 +186,7 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
           <h2 className="font-editorial text-2xl font-bold sm:text-3xl">Discounts &amp; featured offers</h2>
           <p className="text-xs text-[var(--color-text-secondary)] sm:text-sm">Create discount codes and manage their value, schedule, eligibility, and storefront visibility.</p>
         </div>
-        <Button type="button" onClick={() => { setEditing(null); setDiscountType("percentage"); setIsOpen(true); }}><Plus className="h-4 w-4" /> Add Discount</Button>
+        <Button type="button" onClick={openNewPromotion}><Plus className="h-4 w-4" /> Add Discount</Button>
       </div>
 
       <div className="hidden overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm lg:block">
@@ -154,10 +196,10 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
             {promotions.map((promotion) => <tr key={promotion.id}>
               <td className="p-4"><p className="font-bold tracking-wide">{promotion.code}</p>{promotion.title && <p className="mt-1 text-xs">{promotion.title}{promotion.is_featured ? " · Featured" : ""}</p>}{promotion.description && <p className="mt-1 max-w-xs text-[10px] text-[var(--color-text-secondary)]">{promotion.description}</p>}</td>
               <td className="p-4">{promotion.discount_type === "percentage" ? `${promotion.discount_value}%` : `EGP ${Number(promotion.discount_value).toFixed(2)}`}{promotion.maximum_discount != null && <p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">Maximum EGP {Number(promotion.maximum_discount).toFixed(2)}</p>}</td>
-              <td className="p-4"><p>Minimum EGP {Number(promotion.minimum_subtotal).toFixed(2)}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited uses" : `Up to ${promotion.maximum_redemptions} uses`}</p></td>
+              <td className="p-4"><p>{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</p><RedemptionCounts promotion={promotion} /></td>
               <td className="p-4 text-[10px]">{promotion.starts_at ? new Date(promotion.starts_at).toLocaleString("en-EG", { timeZone: "UTC" }) : "No start"}<p className="mt-1">{promotion.ends_at ? `Until ${new Date(promotion.ends_at).toLocaleString("en-EG", { timeZone: "UTC" })} UTC` : "No expiry"}</p></td>
               <td className="p-4"><span className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${promotion.is_active ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]" : "border-[var(--color-border)] text-[var(--color-text-secondary)]"}`}>{promotion.is_active ? "Active" : "Inactive"}</span><p className="mt-2 text-[10px] text-[var(--color-text-secondary)]">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}</p></td>
-              <td className="p-4 text-right"><div className="flex justify-end gap-2"><Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => { setEditing(promotion); setDiscountType(promotion.discount_type); setIsOpen(true); }} aria-label={`Edit ${promotion.code}`}><Edit className="h-3.5 w-3.5" /><span className="sr-only">Edit</span></Button><Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => toggle(promotion)}>{promotion.is_active ? "Deactivate" : "Activate"}</Button></div></td>
+              <td className="p-4 text-right"><div className="flex justify-end gap-2"><Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => openEditPromotion(promotion)} aria-label={`Edit ${promotion.code}`}><Edit className="h-3.5 w-3.5" /><span className="sr-only">Edit</span></Button><Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => toggle(promotion)}>{promotion.is_active ? "Deactivate" : "Activate"}</Button></div></td>
             </tr>)}
             {promotions.length === 0 && <tr><td colSpan="6" className="p-12 text-center text-[var(--color-text-secondary)]">No discount codes yet. Create one to make it available at checkout.</td></tr>}
           </tbody>
@@ -177,12 +219,13 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-3 text-xs">
               <div><dt className="text-[var(--color-text-secondary)]">Discount</dt><dd className="mt-1 font-semibold">{promotion.discount_type === "percentage" ? `${promotion.discount_value}%` : `EGP ${Number(promotion.discount_value).toFixed(2)}`}{promotion.maximum_discount != null && <span className="block font-normal text-[var(--color-text-secondary)]">Maximum EGP {Number(promotion.maximum_discount).toFixed(2)}</span>}</dd></div>
-              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">Minimum EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</span><span className="block text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</span></dd></div>
+              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</span><span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</span><span className="block text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Schedule</dt><dd className="mt-1">{promotion.starts_at ? new Date(promotion.starts_at).toLocaleString("en-EG", { timeZone: "UTC" }) : "No start"}<span className="block">{promotion.ends_at ? `Until ${new Date(promotion.ends_at).toLocaleString("en-EG", { timeZone: "UTC" })} UTC` : "No expiry"}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Storefront</dt><dd className="mt-1">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}<span className="block">{promotion.is_featured ? `Featured · priority ${promotion.display_priority}` : "Not featured"}</span></dd></div>
+              <div className="col-span-2"><dt className="text-[var(--color-text-secondary)]">Redemption history</dt><dd><RedemptionCounts promotion={promotion} /></dd></div>
             </dl>
             <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
-              <Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => { setEditing(promotion); setDiscountType(promotion.discount_type); setIsOpen(true); }} aria-label={`Edit ${promotion.code}`}><Edit aria-hidden="true" className="h-3.5 w-3.5" />Edit</Button>
+              <Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => openEditPromotion(promotion)} aria-label={`Edit ${promotion.code}`}><Edit aria-hidden="true" className="h-3.5 w-3.5" />Edit</Button>
               <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => toggle(promotion)}>{promotion.is_active ? "Deactivate" : "Activate"}</Button>
             </div>
           </article>
@@ -198,12 +241,17 @@ export default function AdminPromotionsManager({ promotions, shippingSettings })
           <label className="grid gap-1.5 text-xs font-semibold text-[var(--color-text-secondary)]"><span>Discount type</span><CustomSelect id="promotion-discount-type" ariaLabel="Discount type" options={[{ value: "percentage", label: "Percentage" }, { value: "fixed_amount", label: "Fixed amount (EGP)" }]} value={discountType} onChange={setDiscountType} disabled={isPending} /></label>
           <label className="block text-xs font-semibold">Discount value<input name="discountValue" required inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0.01" step="0.01" defaultValue={editing?.discount_value ?? ""} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Maximum discount (optional, EGP)<input name="maximumDiscount" inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0.01" step="0.01" defaultValue={editing?.maximum_discount ?? ""} className={inputClass} /></label>
-          <label className="block text-xs font-semibold">Minimum subtotal (EGP)<input name="minimumSubtotal" required inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0" step="0.01" defaultValue={editing?.minimum_subtotal ?? "0"} className={inputClass} /></label>
+          <label className="grid gap-1.5 text-xs font-semibold text-[var(--color-text-secondary)]"><span>Application scope</span><CustomSelect id="promotion-application-scope" ariaLabel="Application scope" options={[{ value: "order", label: "Entire order" }, { value: "products", label: "Selected products" }, { value: "categories", label: "Selected categories" }, { value: "product_and_category", label: "Selected products or categories" }]} value={applicationScope} onChange={setApplicationScope} disabled={isPending} /></label>
+          <label className="block text-xs font-semibold">{applicationScope === "order" ? "Minimum order subtotal (EGP)" : "Minimum eligible subtotal (EGP)"}<input name="minimumSubtotal" required inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0" step="0.01" defaultValue={editing?.minimum_subtotal ?? "0"} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Maximum redemptions (optional)<input name="maximumRedemptions" type="number" min="1" step="1" defaultValue={editing?.maximum_redemptions ?? ""} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Maximum uses per account<input name="perAccountRedemptionLimit" type="number" min="1" step="1" defaultValue={editing ? (editing.per_account_redemption_limit ?? "") : "1"} className={inputClass} /><span className="mt-1 block font-normal text-[var(--color-text-secondary)]">Default is 1. Leave blank for unlimited uses per account.</span></label>
           <label className="block text-xs font-semibold">Starts at (optional, UTC)<input name="startsAt" type="datetime-local" defaultValue={utcInputValue(editing?.starts_at)} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Expires at (optional, UTC)<input name="endsAt" type="datetime-local" defaultValue={utcInputValue(editing?.ends_at)} className={inputClass} /></label>
         </div>
+        {applicationScope === "products" || applicationScope === "product_and_category" ? <PromotionTargetPicker label="Target products" options={productOptions} selectedIds={productTargetIds} onChange={setProductTargetIds} disabled={isPending} /> : null}
+        {applicationScope === "categories" || applicationScope === "product_and_category" ? <PromotionTargetPicker label="Target categories" options={categoryOptions} selectedIds={categoryTargetIds} onChange={setCategoryTargetIds} disabled={isPending} /> : null}
+        {applicationScope === "product_and_category" && <p className="text-xs text-[var(--color-text-secondary)]">A product qualifies when it matches either a selected product or a selected category.</p>}
+        <label className="flex items-center gap-2 text-xs"><input name="firstPurchaseOnly" type="checkbox" defaultChecked={editing?.first_purchase_only ?? false} className="accent-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]" /> First purchase only</label>
         <label className="block text-xs font-semibold">Storefront title (required when featured)<input name="title" maxLength={160} defaultValue={editing?.title ?? ""} className={inputClass} /></label>
         <label className="block text-xs font-semibold">Description (optional)<textarea name="description" maxLength={1000} rows={2} defaultValue={editing?.description ?? ""} className={inputClass} /></label>
         <div className="grid gap-4 sm:grid-cols-2">

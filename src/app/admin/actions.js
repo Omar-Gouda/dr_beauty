@@ -24,12 +24,41 @@ function text(value, maxLength) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
+function getSafeProductDatabaseDiagnostic(error) {
+  const code = typeof error?.code === "string" && /^[A-Z0-9]{3,12}$/.test(error.code)
+    ? error.code
+    : "unknown";
+  const message = typeof error?.message === "string"
+    ? error.message.replace(/[\r\n\t\0-\x1f\x7f]/g, " ").slice(0, 400)
+    : "No database error message was returned.";
+  return { code, message };
+}
+
+function logProductDatabaseFailure(operation, error) {
+  const diagnostic = getSafeProductDatabaseDiagnostic(error);
+  console.error(`[admin-product-${operation}] Supabase failure code=${diagnostic.code} message=${diagnostic.message}`);
+  return diagnostic;
+}
+
+function getDevelopmentDatabaseMessage(operation, diagnostic) {
+  return process.env.NODE_ENV === "production"
+    ? null
+    : `Supabase rejected product ${operation} (code ${diagnostic.code}): ${diagnostic.message}`;
+}
+
 function safeImageReferences(images) {
   if (!Array.isArray(images) || images.length < 1 || images.length > 10) return null;
-  const references = images.map((image) => typeof image === "string" ? image.trim() : "");
-  if (references.some((reference) => reference.length > 2048 ||
-      (!(/^\/images\/[a-zA-Z0-9/_-]+\.(?:avif|gif|jpe?g|png|webp)$/i.test(reference) && !reference.includes("..")) &&
-        !isSafeExternalImageUrl(reference)))) return null;
+  const references = images.map((image) => {
+    const url = typeof image === "string" ? image.trim() : typeof image?.url === "string" ? image.url.trim() : "";
+    const focalX = typeof image === "string" ? 50 : image?.focal_x;
+    const focalY = typeof image === "string" ? 50 : image?.focal_y;
+    if (typeof focalX !== "number" || typeof focalY !== "number" ||
+        !Number.isFinite(focalX) || !Number.isFinite(focalY) || focalX < 0 || focalX > 100 || focalY < 0 || focalY > 100) return null;
+    return { url, focal_x: Math.round(focalX * 100) / 100, focal_y: Math.round(focalY * 100) / 100 };
+  });
+  if (references.some((image) => !image || image.url.length > 2048 ||
+      (!(/^\/images\/[a-zA-Z0-9/_-]+\.(?:avif|gif|jpe?g|png|webp)$/i.test(image.url) && !image.url.includes("..")) &&
+        !isSafeExternalImageUrl(image.url)))) return null;
   return references;
 }
 
@@ -50,7 +79,11 @@ export async function saveProduct(input) {
   const brandSlug = slugify(brandName);
   const categoryId = text(input.categoryId, 36);
   const pricing = validateProductPricing(input.price, input.compareAtPrice);
-  const stockQuantity = Number(input.stockQuantity);
+  const stockQuantity = typeof input.stockQuantity === "number"
+    ? input.stockQuantity
+    : typeof input.stockQuantity === "string" && /^\d+$/.test(input.stockQuantity.trim())
+      ? Number(input.stockQuantity.trim())
+      : Number.NaN;
   const images = safeImageReferences(input.images);
 
   if ((id && !UUID_PATTERN.test(id)) || name.length < 1 || !SLUG_PATTERN.test(slug) ||
@@ -62,7 +95,7 @@ export async function saveProduct(input) {
   }
 
   try {
-    const { data, error } = await supabase.rpc("save_admin_product_with_compare_at", {
+    const { data, error } = await supabase.rpc("save_admin_product_with_image_focal_points", {
       p_product_id: id,
       p_name: name,
       p_slug: slug,
@@ -73,20 +106,28 @@ export async function saveProduct(input) {
       p_description: text(input.description, 10000) || null,
       p_ingredients: text(input.ingredients, 10000) || null,
       p_stock_quantity: stockQuantity,
-      p_image_urls: images,
+      p_image_urls: images.map((image) => image.url),
+      p_image_focal_points: images.map(({ focal_x, focal_y }) => ({ x: focal_x, y: focal_y })),
       p_is_active: input.isActive === true,
       p_is_bestseller: input.isBestseller === true,
       p_compare_at_price: pricing.compareAtPrice,
     });
     if (error || typeof data !== "string" || !UUID_PATTERN.test(data)) {
-      return { ok: false, message: id
+      const diagnostic = logProductDatabaseFailure("save", error ?? {
+        code: "invalid_rpc_response",
+        message: "The product save RPC did not return a valid product UUID.",
+      });
+      const developmentMessage = getDevelopmentDatabaseMessage("save", diagnostic);
+      return { ok: false, message: developmentMessage ?? (id
         ? "Product could not be updated. Check its details and try again."
-        : "Product could not be created. Check its details and try again." };
+        : "Product could not be created. Check its details and try again.") };
     }
-  } catch {
-    return { ok: false, message: id
+  } catch (caughtError) {
+    const diagnostic = logProductDatabaseFailure("save", caughtError);
+    const developmentMessage = getDevelopmentDatabaseMessage("save", diagnostic);
+    return { ok: false, message: developmentMessage ?? (id
       ? "Product could not be updated. Check its details and try again."
-      : "Product could not be created. Check its details and try again." };
+      : "Product could not be created. Check its details and try again.") };
   }
 
   revalidatePath("/admin");
@@ -107,6 +148,55 @@ export async function setProductActive(productId, isActive) {
   revalidatePath("/shop");
   revalidatePath("/");
   return { ok: true, message: isActive ? "Product activated." : "Product deactivated." };
+}
+
+export async function deleteProduct(productId) {
+  const supabase = await authorizedClient();
+  if (!supabase) return { ok: false, message: "Admin access is unavailable. Sign in with an authorized account." };
+  if (!UUID_PATTERN.test(String(productId ?? ""))) return { ok: false, message: "Choose a valid product." };
+
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabase.rpc("delete_admin_product", { p_product_id: productId }));
+  } catch (caughtError) {
+    const diagnostic = logProductDatabaseFailure("delete", caughtError);
+    const developmentMessage = getDevelopmentDatabaseMessage("delete", diagnostic);
+    return { ok: false, message: developmentMessage ?? "Product could not be deleted. Please try again." };
+  }
+  if (error) {
+    const diagnostic = logProductDatabaseFailure("delete", error);
+    const developmentMessage = getDevelopmentDatabaseMessage("delete", diagnostic);
+    if (developmentMessage) return { ok: false, message: developmentMessage };
+    if (error.code === "42501") return { ok: false, message: "Administrator access is required to delete a product." };
+    if (error.code === "23503") {
+      return { ok: false, message: "Product could not be deleted because a dependent record still references it. Preserve those records and resolve the dependency before retrying." };
+    }
+    if (error.code === "P0002") return { ok: false, message: "This product no longer exists. Refresh the product list." };
+    if (error.code === "PGRST202" || error.code === "PGRST203") {
+      return { ok: false, message: "The product deletion RPC is missing or has a mismatched signature. Apply the local admin product delete migration, then refresh the API schema cache." };
+    }
+    return { ok: false, message: "Product could not be deleted because the database rejected the request. Please try again." };
+  }
+  if (typeof data !== "string" || data.toLowerCase() !== productId.toLowerCase()) {
+    logProductDatabaseFailure("delete", {
+      code: "invalid_rpc_response",
+      message: "The deletion RPC did not return the requested product UUID.",
+    });
+    return { ok: false, message: "Product deletion was not confirmed. Refresh the product list before retrying." };
+  }
+
+  revalidatePath("/admin");
+  revalidatePath("/admin/products");
+  revalidatePath("/admin/reviews");
+  revalidatePath("/admin/requests");
+  revalidatePath("/shop");
+  revalidatePath("/offers");
+  revalidatePath("/wishlist");
+  revalidatePath("/products/[slug]", "page");
+  revalidatePath("/categories/[slug]", "page");
+  revalidatePath("/");
+  return { ok: true, message: "Product permanently deleted. Historical order items and reviews were preserved." };
 }
 
 export async function saveCategory(input) {
@@ -219,9 +309,16 @@ export async function savePromotion(input) {
   const displayPriority = input.displayPriority === "" || input.displayPriority == null ? 0 : Number(input.displayPriority);
   const announcementPriority = input.announcementPriority === "" || input.announcementPriority == null ? 0 : Number(input.announcementPriority);
   const targetPath = typeof input.targetPath === "string" ? input.targetPath.trim() : "/shop";
+  const applicationScope = input.applicationScope;
+  const firstPurchaseOnly = input.firstPurchaseOnly;
+  const productTargetIds = Array.isArray(input.productTargetIds) ? input.productTargetIds : null;
+  const categoryTargetIds = Array.isArray(input.categoryTargetIds) ? input.categoryTargetIds : null;
   const startsAt = promotionTimestamp(input.startsAt);
   const endsAt = promotionTimestamp(input.endsAt);
   const decimal = (value, allowZero = false) => new RegExp(`^${allowZero ? "" : "(?=.*[1-9])"}\\d{1,10}(?:\\.\\d{1,2})?$`).test(value);
+  const uniqueTargetIds = (ids) => ids &&
+    ids.every((targetId) => typeof targetId === "string" && UUID_PATTERN.test(targetId)) &&
+    new Set(ids.map((targetId) => targetId.toLowerCase())).size === ids.length;
 
   if ((id && !UUID_PATTERN.test(id)) || rawCode.length > 64 || !/^[A-Z0-9][A-Z0-9_-]{0,63}$/.test(code) ||
       title.length > 160 || (isFeatured && !title) || description.length > 1000 ||
@@ -234,11 +331,18 @@ export async function savePromotion(input) {
       (maximumRedemptions !== null && (!Number.isSafeInteger(maximumRedemptions) || maximumRedemptions < 1 || maximumRedemptions > 2147483647)) ||
       (perAccountRedemptionLimit !== null && (!Number.isSafeInteger(perAccountRedemptionLimit) || perAccountRedemptionLimit < 1 || perAccountRedemptionLimit > 2147483647)) ||
       startsAt === undefined || endsAt === undefined || (startsAt && endsAt && Date.parse(endsAt) <= Date.parse(startsAt)) ||
-      typeof input.isActive !== "boolean") {
+      typeof input.isActive !== "boolean" || typeof firstPurchaseOnly !== "boolean" ||
+      !["order", "products", "categories", "product_and_category"].includes(applicationScope) ||
+      !uniqueTargetIds(productTargetIds) || !uniqueTargetIds(categoryTargetIds) ||
+      (applicationScope === "order" && (productTargetIds.length || categoryTargetIds.length)) ||
+      (applicationScope === "products" && (!productTargetIds.length || categoryTargetIds.length)) ||
+      (applicationScope === "categories" && (!categoryTargetIds.length || productTargetIds.length)) ||
+      (applicationScope === "product_and_category" && (!productTargetIds.length || !categoryTargetIds.length))) {
     return { ok: false, message: "Check the code, discount amount, limits, and date range." };
   }
 
   const values = {
+    id,
     code,
     title: title || null,
     description: description || null,
@@ -256,12 +360,16 @@ export async function savePromotion(input) {
     target_path: targetPath,
     is_announcement: isAnnouncement,
     announcement_priority: announcementPriority,
+    first_purchase_only: firstPurchaseOnly,
+    application_scope: applicationScope,
   };
-  const savedPromotionFields = "id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,per_account_redemption_limit,starts_at,ends_at,target_path,is_active,is_featured";
-  const result = id
-    ? await supabase.from("promotions").update(values).eq("id", id).select(savedPromotionFields).maybeSingle()
-    : await supabase.from("promotions").insert(values).select(savedPromotionFields).single();
-  if (result.error || !result.data) return { ok: false, message: "Discount code could not be saved. The code may already exist." };
+  const { data, error } = await supabase.rpc("save_admin_promotion", {
+    p_promotion: values,
+    p_product_ids: productTargetIds,
+    p_category_ids: categoryTargetIds,
+  });
+  const savedPromotion = Array.isArray(data) ? data[0] : null;
+  if (error || !savedPromotion) return { ok: false, message: "Discount code could not be saved. Check the code and selected targets." };
 
   revalidatePath("/admin/promotions");
   revalidatePath("/checkout");
@@ -271,7 +379,7 @@ export async function savePromotion(input) {
   return {
     ok: true,
     message: id ? "Discount code updated." : "Discount code created.",
-    savedPromotion: result.data.is_active ? result.data : null,
+    savedPromotion: savedPromotion.is_active ? savedPromotion : null,
   };
 }
 
@@ -464,6 +572,36 @@ export async function markCodPaymentCollected(formData) {
     ok: true,
     message: result.newly_paid ? "Cash payment recorded as collected." : "Cash payment was already recorded as collected.",
   };
+}
+
+export async function deleteAdminOrder(orderId) {
+  const supabase = await authorizedClient();
+  if (!supabase) {
+    return { ok: false, message: "Admin access is unavailable. Sign in with an authorized account." };
+  }
+  if (!UUID_PATTERN.test(String(orderId ?? ""))) {
+    return { ok: false, message: "Select a valid order." };
+  }
+
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabase.rpc("delete_admin_order", { p_order_id: orderId }));
+  } catch {
+    return { ok: false, message: "The order could not be deleted. Refresh and try again." };
+  }
+
+  const result = Array.isArray(data) ? data[0] : null;
+  if (error) {
+    if (error.code === "42501") return { ok: false, message: "Administrator access is required to delete an order." };
+    if (error.code === "P0002") return { ok: false, message: "This order no longer exists. Refresh the order list." };
+    return { ok: false, message: "The order could not be deleted. Refresh and try again." };
+  }
+  if (!result?.deleted) return { ok: false, message: "The order could not be deleted. Refresh and try again." };
+
+  revalidatePath("/admin/orders");
+  revalidatePath("/admin");
+  return { ok: true, message: `Order #${result.order_number} was permanently deleted.` };
 }
 
 export async function moderateProductReview(formData) {

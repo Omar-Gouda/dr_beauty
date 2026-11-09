@@ -15,6 +15,7 @@ import { checkProductAvailability, submitProductReview } from "@/app/(store)/pro
 import WhatsAppAction from "@/components/whatsapp/WhatsAppAction";
 import { addAvailableProductToCart, isProductAvailableForPurchase } from "@/lib/products/cart-availability.mjs";
 import ProductPrice from "@/components/products/ProductPrice";
+import { parseProductIngredients } from "@/lib/products/product-form.mjs";
 
 export default function ProductDetail({ product, relatedProducts = [] }) {
   const [quantity, setQuantity] = useState(1);
@@ -27,6 +28,7 @@ export default function ProductDetail({ product, relatedProducts = [] }) {
   const { showToast } = useToast();
   const wishlisted = isWishlisted(product.id);
   const productImages = product.images.length ? product.images : [fallbackCategoryImage];
+  const ingredients = parseProductIngredients(product.ingredients);
 
   async function addProductToBag() {
     if (checkingStock || !isProductAvailableForPurchase(product.inStock)) return;
@@ -66,7 +68,7 @@ export default function ProductDetail({ product, relatedProducts = [] }) {
           
           {/* Product Gallery */}
           <div className="min-w-0 lg:sticky lg:top-28 lg:col-span-5">
-            <ProductGallery images={productImages} productName={product.name} />
+            <ProductGallery images={productImages} imagePositions={product.imagePositions} inStock={product.inStock} productName={product.name} />
           </div>
 
           {/* Product Info & Actions */}
@@ -212,7 +214,17 @@ export default function ProductDetail({ product, relatedProducts = [] }) {
 
               <div className="break-words pt-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">
                 {activeTab === "ingredients" ? (
-                  <p>{product.ingredients || "Ingredient details will be available soon."}</p>
+                  ingredients.length ? (
+                    <ul aria-label="Key ingredients" className="flex flex-wrap gap-2">
+                      {ingredients.map((ingredient, index) => (
+                        <li key={`${ingredient}-${index}`} className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-3 py-1.5 text-xs leading-relaxed text-[var(--color-text-secondary)]">
+                          {ingredient}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p>Ingredient details will be available soon.</p>
+                  )
                 ) : (
                   <p>{product.description || "Product details will be available soon."}</p>
                 )}

@@ -2,13 +2,15 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Image from "next/image";
-import { Edit, Plus, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Edit, Plus, Search, Trash2 } from "lucide-react";
 import AddProductForm from "@/components/admin/AddProductForm";
-import { setProductActive } from "@/app/admin/actions";
+import { deleteProduct, setProductActive } from "@/app/admin/actions";
 import { useToast } from "@/constants/ToastContext";
 import CustomSelect from "@/components/ui/Select";
 import Button from "@/components/ui/Button";
 import AccessibleDialog from "@/components/ui/AccessibleDialog";
+import ConfirmationDialog from "@/components/ui/ConfirmationDialog";
 import ProductPrice from "@/components/products/ProductPrice";
 
 export default function AdminProductsManager({ products, categories, initialEditingProduct = null }) {
@@ -16,8 +18,10 @@ export default function AdminProductsManager({ products, categories, initialEdit
   const [statusFilter, setStatusFilter] = useState("all");
   const [isOpen, setIsOpen] = useState(Boolean(initialEditingProduct));
   const [editing, setEditing] = useState(initialEditingProduct);
+  const [productToDelete, setProductToDelete] = useState(null);
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
+  const router = useRouter();
   const filteredProducts = useMemo(() => {
     const term = search.trim().toLowerCase();
     return products.filter((product) => {
@@ -31,6 +35,21 @@ export default function AdminProductsManager({ products, categories, initialEdit
     const result = await setProductActive(product.id, !product.is_active);
     showToast(result.message, result.ok ? "success" : "error");
   });
+
+  const confirmDeleteProduct = () => {
+    if (isPending || !productToDelete) return;
+    startTransition(async () => {
+      try {
+        const result = await deleteProduct(productToDelete.id);
+        setProductToDelete(null);
+        showToast(result.message, result.ok ? "success" : "error");
+        if (result.ok) router.refresh();
+      } catch {
+        setProductToDelete(null);
+        showToast("Product could not be deleted. Please refresh and try again.", "error");
+      }
+    });
+  };
 
   const openEditor = (product = null) => {
     setEditing(product);
@@ -87,6 +106,7 @@ export default function AdminProductsManager({ products, categories, initialEdit
                   <td className="p-4 text-right"><div className="flex justify-end gap-2">
                     <Button type="button" variant="secondary" size="sm" onClick={() => openEditor(product)} aria-label={`Edit ${product.name}`}><Edit className="h-3.5 w-3.5" /><span className="sr-only">Edit</span></Button>
                     <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => changeActive(product)}>{product.is_active ? "Deactivate" : "Activate"}</Button>
+                    <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setProductToDelete(product)} aria-label={`Permanently delete ${product.name}`}><Trash2 aria-hidden="true" className="h-3.5 w-3.5" /><span className="sr-only">Delete</span></Button>
                   </div></td>
                 </tr>;
               })}
@@ -118,6 +138,7 @@ export default function AdminProductsManager({ products, categories, initialEdit
               <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
                 <Button type="button" variant="secondary" size="sm" onClick={() => openEditor(product)} aria-label={`Edit ${product.name}`}><Edit aria-hidden="true" className="h-3.5 w-3.5" />Edit</Button>
                 <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => changeActive(product)}>{product.is_active ? "Deactivate" : "Activate"}</Button>
+                <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setProductToDelete(product)} aria-label={`Permanently delete ${product.name}`}><Trash2 aria-hidden="true" className="h-3.5 w-3.5" />Delete</Button>
               </div>
             </article>
           );
@@ -134,6 +155,16 @@ export default function AdminProductsManager({ products, categories, initialEdit
           <AddProductForm key={editing?.id ?? "new-product"} categories={categories} product={editing} onClose={() => setIsOpen(false)} />
         </section>
       </AccessibleDialog>}
+
+      {productToDelete && <ConfirmationDialog
+        title="Delete product permanently?"
+        description={`Permanently delete ${productToDelete.name}. Historical order items, customer reviews, customer service requests, and promotion redemption history will be retained. Product inventory, images, and wishlist entries will be removed.`}
+        confirmLabel="Delete product"
+        pendingLabel="Deleting product…"
+        isPending={isPending}
+        onCancel={() => setProductToDelete(null)}
+        onConfirm={confirmDeleteProduct}
+      />}
     </div>
   );
 }

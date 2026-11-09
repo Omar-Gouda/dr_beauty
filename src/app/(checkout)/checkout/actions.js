@@ -3,7 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import { normalizeWhatsAppPhoneNumber } from "@/lib/whatsapp/messages.mjs";
-import { calculatePromotionDiscountCents, calculateShippingBreakdownCents, parseMoneyCents } from "@/lib/promotions.mjs";
+import { calculateShippingBreakdownCents, parseMoneyCents } from "@/lib/promotions.mjs";
+import { calculateEligiblePromotionAmounts, calculateEligiblePromotionDiscountCents } from "@/lib/promotion-targeting.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ITEMS = 50;
@@ -60,9 +61,9 @@ export async function previewPromotionCode(codeInput, inputItems) {
 
     const productIds = items.map((item) => item.product_id);
     const [{ data: products, error: productError }, { data: promotions, error: promotionError }, { data: settings, error: settingsError }] = await Promise.all([
-      supabase.from("products").select("id,price").eq("is_active", true).in("id", productIds),
+      supabase.from("products").select("id,price,category_id").eq("is_active", true).in("id", productIds),
       supabase.from("promotions")
-        .select("code,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,is_active,starts_at,ends_at")
+        .select("id,code,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,is_active,starts_at,ends_at,first_purchase_only,application_scope")
         .ilike("code", code.replace(/[\\%_]/g, "\\$&"))
         .limit(2),
       supabase.from("shipping_settings").select("is_shipping_enabled,default_fee,free_shipping_minimum_subtotal").eq("id", true).maybeSingle(),
@@ -74,21 +75,44 @@ export async function previewPromotionCode(codeInput, inputItems) {
 
     const promotion = promotions[0];
     if (!promotion.is_active || promotion.code.toUpperCase() !== code) return { ok: false, message: "This code is not available for the current bag." };
-    const prices = new Map(products.map((product) => [product.id, parseMoneyCents(product.price)]));
-    const subtotalCents = items.reduce((sum, item) => {
-      const price = prices.get(item.product_id);
-      return price == null ? NaN : sum + price * item.quantity;
-    }, 0);
-    if (!Number.isSafeInteger(subtotalCents)) return { ok: false, message: "Current product prices could not be verified." };
-
     const now = Date.now();
     if ((promotion.starts_at && Date.parse(promotion.starts_at) > now) ||
         (promotion.ends_at && Date.parse(promotion.ends_at) <= now)) {
       return { ok: false, message: "This code is not available for the current bag." };
     }
-    const discountCents = calculatePromotionDiscountCents(subtotalCents, promotion);
-    if (discountCents === null) return { ok: false, message: "This code is not eligible for the current subtotal." };
-    const shipping = calculateShippingBreakdownCents(subtotalCents, settings);
+    const { data: eligibilityRows, error: eligibilityError } = await supabase.rpc(
+      "get_promotion_preview_eligibility",
+      { p_promotion_id: promotion.id },
+    );
+    const eligibility = Array.isArray(eligibilityRows) ? eligibilityRows[0] : null;
+    if (eligibilityError || typeof eligibility?.global_capacity_available !== "boolean" ||
+        typeof eligibility?.account_capacity_available !== "boolean" ||
+        typeof eligibility?.first_purchase_eligible !== "boolean" ||
+        typeof eligibility?.first_purchase_only !== "boolean" ||
+        !Array.isArray(eligibility?.product_target_ids) || !Array.isArray(eligibility?.category_target_ids) ||
+        !["order", "products", "categories", "product_and_category"].includes(eligibility?.application_scope)) {
+      return { ok: false, message: "Promotion eligibility could not be verified. Please try again." };
+    }
+    if (!eligibility.global_capacity_available) {
+      return { ok: false, message: "This code has reached its total redemption limit." };
+    }
+    if (!eligibility.account_capacity_available) {
+      return { ok: false, message: "You have reached this code's redemption limit for your account." };
+    }
+    if (eligibility.first_purchase_only && !eligibility.first_purchase_eligible) {
+      return { ok: false, message: "This offer is available for your first purchase only." };
+    }
+    const amounts = calculateEligiblePromotionAmounts({
+      items,
+      products,
+      scope: eligibility.application_scope,
+      productTargetIds: eligibility.product_target_ids,
+      categoryTargetIds: eligibility.category_target_ids,
+    });
+    if (!amounts) return { ok: false, message: "Current product prices could not be verified." };
+    const discountCents = calculateEligiblePromotionDiscountCents(amounts, promotion);
+    if (discountCents === null) return { ok: false, message: "This code is not eligible for the current bag or eligible subtotal." };
+    const shipping = calculateShippingBreakdownCents(amounts.subtotalCents, settings);
     if (!shipping) {
       return { ok: false, message: "Shipping is temporarily unavailable. Please try again later." };
     }
@@ -96,7 +120,8 @@ export async function previewPromotionCode(codeInput, inputItems) {
       ok: true,
       quote: {
         code: promotion.code,
-        subtotal: moneyFromCents(subtotalCents),
+        subtotal: moneyFromCents(amounts.subtotalCents),
+        eligibleSubtotal: moneyFromCents(amounts.eligibleSubtotalCents),
         shippingFee: moneyFromCents(shipping.shippingFeeCents),
         shippingDiscountAmount: moneyFromCents(shipping.shippingDiscountCents),
         shippingAmount: moneyFromCents(shipping.shippingAmountCents),
@@ -156,6 +181,7 @@ function safeRpcMessage(error) {
   if (message.includes("different whatsapp consent choice")) {
     return "This checkout attempt has a different saved WhatsApp choice. We kept the original attempt to prevent a duplicate order.";
   }
+  if (message.includes("first purchase only")) return "This offer is available for your first purchase only.";
   if (message.includes("sufficient stock") || message.includes("stock changed") || message.includes("unavailable")) {
     return "One or more items are no longer available in the requested quantity. Review your cart and try again.";
   }

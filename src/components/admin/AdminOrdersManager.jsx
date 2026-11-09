@@ -1,12 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import CustomSelect from "@/components/ui/Select";
 import Button from "@/components/ui/Button";
 import OrderLifecycleControls from "@/components/admin/OrderLifecycleControls";
 import WhatsAppAction from "@/components/whatsapp/WhatsAppAction";
+import ConfirmationDialog from "@/components/ui/ConfirmationDialog";
+import { deleteAdminOrder } from "@/app/admin/actions";
+import { useToast } from "@/constants/ToastContext";
 import { buildAdminOrdersPageHref } from "@/lib/admin-order-query.mjs";
 
 const statusOptions = [
@@ -20,6 +24,45 @@ const statusOptions = [
 ];
 
 const pageSizeOptions = [10, 25, 50].map((value) => ({ value: String(value), label: `${value} per page` }));
+
+function OrderDeleteAction({ order }) {
+  const router = useRouter();
+  const { showToast } = useToast();
+  const [isPending, startTransition] = useTransition();
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
+  function removeOrder() {
+    if (isPending) return;
+    startTransition(async () => {
+      try {
+        const result = await deleteAdminOrder(order.id);
+        setIsConfirmOpen(false);
+        showToast(result.message, result.ok ? "success" : "error");
+        if (result.ok) router.refresh();
+      } catch {
+        setIsConfirmOpen(false);
+        showToast("The order could not be deleted. Refresh and try again.", "error");
+      }
+    });
+  }
+
+  return (
+    <div className="flex justify-end border-t border-[var(--color-border)] pt-4">
+      <Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => setIsConfirmOpen(true)} aria-label={`Permanently delete order ${order.order_number}`}>
+        <Trash2 aria-hidden="true" className="h-4 w-4" /> {isPending ? "Deleting…" : "Delete order permanently"}
+      </Button>
+      {isConfirmOpen && <ConfirmationDialog
+        title={`Delete order #${order.order_number} permanently?`}
+        description="This permanently deletes the order and its item snapshots. Promotion redemption history will be retained. This action cannot be undone."
+        confirmLabel="Delete order"
+        pendingLabel="Deleting order…"
+        isPending={isPending}
+        onCancel={() => setIsConfirmOpen(false)}
+        onConfirm={removeOrder}
+      />}
+    </div>
+  );
+}
 
 function OrderDetails({ order }) {
   return (
@@ -75,6 +118,7 @@ function OrderDetails({ order }) {
         <span className="text-sm">Total: <b>EGP {Number(order.total_amount).toFixed(2)}</b></span>
       </div>
       <OrderLifecycleControls key={`${order.id}-${order.order_status}`} order={order} />
+      <OrderDeleteAction order={order} />
     </div>
   );
 }

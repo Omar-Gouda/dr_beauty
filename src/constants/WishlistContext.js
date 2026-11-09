@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useSyncExternalStore } from "react";
+import { normalizeProductImagePositions } from "@/lib/products/product-image-state.mjs";
 
 const WishlistContext = createContext(null);
 const WISHLIST_STORAGE_KEY = "dr_beauty_wishlist";
@@ -32,6 +33,10 @@ function normalizeProduct(product) {
   if (!PRODUCT_ID_PATTERN.test(product?.id ?? "") || !Number.isFinite(price) || price < 0 || typeof product?.name !== "string") {
     return null;
   }
+  const images = Array.isArray(product.images)
+    ? product.images.filter((image) => typeof image === "string").slice(0, 10)
+    : [];
+  const imagePositions = normalizeProductImagePositions(product.imagePositions, images.length);
   return {
     id: product.id,
     slug: typeof product.slug === "string" ? product.slug : "",
@@ -40,9 +45,8 @@ function normalizeProduct(product) {
     currency: "EGP",
     brand: typeof product.brand === "string" ? product.brand : "",
     categoryName: typeof product.categoryName === "string" ? product.categoryName : "",
-    images: Array.isArray(product.images)
-      ? product.images.filter((image) => typeof image === "string").slice(0, 10)
-      : [],
+    images,
+    imagePositions,
   };
 }
 

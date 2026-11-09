@@ -71,3 +71,31 @@ export function normalizeCategoryInput(input) {
     },
   };
 }
+
+export function validateCategoryForm(input) {
+  const normalized = normalizeCategoryInput(input);
+  if (normalized.ok) return { ...normalized, errors: {} };
+
+  const errors = {};
+  const name = typeof input?.name === "string" ? input.name.trim() : "";
+  const rawSlug = typeof input?.slug === "string" ? input.slug.trim() : "";
+  const slug = slugifyCategory(rawSlug || name);
+  const description = input?.description;
+  const rawSortOrder = input?.sortOrder;
+  const sortOrder = typeof rawSortOrder === "number"
+    ? rawSortOrder
+    : typeof rawSortOrder === "string" && /^\d+$/.test(rawSortOrder.trim())
+      ? Number(rawSortOrder)
+      : Number.NaN;
+
+  if (!name || name.length > 120) errors.name = "Enter a category name of up to 120 characters.";
+  if (typeof input?.slug !== "string" || !CATEGORY_SLUG_PATTERN.test(slug)) errors.slug = "Enter a URL-safe slug using lowercase letters, numbers, and hyphens.";
+  if (typeof description !== "string" || description.length > 2000) errors.description = "Description must be 2,000 characters or fewer.";
+  if (!Number.isSafeInteger(sortOrder) || sortOrder < 0 || sortOrder > 100000) errors.sortOrder = "Enter a whole display order from 0 to 100,000.";
+  if (typeof input?.isActive !== "boolean") errors.isActive = "Choose whether this category is visible in the storefront.";
+  if (typeof input?.imageUrl !== "string" || (input.imageUrl.trim() && !validateHttpsImageUrl(input.imageUrl).ok)) {
+    errors.imageUrl = "Enter a valid public HTTPS image URL, or leave it empty to use the category artwork.";
+  }
+  if (Object.keys(errors).length === 0) errors.name = "Check the category details and try again.";
+  return { ok: false, reason: normalized.reason, errors };
+}

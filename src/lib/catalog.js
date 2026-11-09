@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import { catalogPaginationSummary, DEFAULT_CATALOG_PAGE_SIZE, MAX_CATALOG_PAGE, MAX_CATALOG_PAGE_SIZE } from "@/lib/catalog-pagination.mjs";
+import { formatImageObjectPosition } from "@/lib/products/product-form.mjs";
 
 const productCardSelection = [
   "id",
@@ -13,7 +14,7 @@ const productCardSelection = [
   "is_bestseller",
   "category:categories!products_category_id_fkey(slug,name)",
   "brand:brands!products_brand_id_fkey(name)",
-  "images:product_images(image_url,sort_order)",
+  "images:product_images(image_url,sort_order,focal_x,focal_y)",
 ].join(",");
 
 const productSearchSelection = [
@@ -32,10 +33,12 @@ function unavailableResult() {
   };
 }
 
-function mapProduct(row, inStock = null) {
-  const images = (row.images ?? [])
-    .toSorted((a, b) => a.sort_order - b.sort_order)
-    .map((image) => image.image_url);
+function mapProduct(row, inStock = null, imageFocalPoints = null) {
+  const sortedImages = (row.images ?? []).toSorted((a, b) => a.sort_order - b.sort_order);
+  const images = sortedImages.map((image) => image.image_url);
+  const imagePositions = sortedImages.map((image) => formatImageObjectPosition(
+    imageFocalPoints?.get(row.id)?.get(image.sort_order) ?? image,
+  ));
   return {
     id: row.id,
     categoryId: row.category_id,
@@ -50,6 +53,7 @@ function mapProduct(row, inStock = null) {
     currency: row.currency,
     brand: row.brand?.name ?? "",
     images,
+    imagePositions,
     rating: null,
     reviews: null,
     approvedReviews: [],
@@ -57,6 +61,21 @@ function mapProduct(row, inStock = null) {
     isBestseller: row.is_bestseller,
     inStock,
   };
+}
+
+async function loadImageFocalPoints(supabase, productIds) {
+  if (productIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("product_images")
+    .select("product_id,sort_order,focal_x,focal_y")
+    .in("product_id", productIds);
+  if (error) return null;
+  const focalPoints = new Map();
+  for (const image of data ?? []) {
+    if (!focalPoints.has(image.product_id)) focalPoints.set(image.product_id, new Map());
+    focalPoints.get(image.product_id).set(image.sort_order, image);
+  }
+  return focalPoints;
 }
 
 async function loadProductAvailability(supabase, productIds) {
@@ -216,9 +235,12 @@ export async function getCatalogShopProducts(filters = {}) {
         catalog.products.length > returnedPageSize) return unavailableResult();
 
     const rows = catalog.products;
-    const availability = await loadProductAvailability(supabase, rows.map((row) => row.id));
+    const [availability, imageFocalPoints] = await Promise.all([
+      loadProductAvailability(supabase, rows.map((row) => row.id)),
+      loadImageFocalPoints(supabase, rows.map((row) => row.id)),
+    ]);
     const products = rows.map((row) => ({
-      ...mapProduct(row, availability?.get(row.id) ?? null),
+      ...mapProduct(row, availability?.get(row.id) ?? null, imageFocalPoints),
       rating: row.rating == null ? null : Number(row.rating),
       reviews: row.reviews == null ? null : Number(row.reviews),
     }));

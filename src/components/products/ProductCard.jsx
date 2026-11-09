@@ -11,6 +11,8 @@ import { checkProductAvailability } from "@/app/(store)/products/actions";
 import WhatsAppAction from "@/components/whatsapp/WhatsAppAction";
 import { addAvailableProductToCart, isProductAvailableForPurchase } from "@/lib/products/cart-availability.mjs";
 import ProductPrice from "@/components/products/ProductPrice";
+import ProductStockBadge from "@/components/products/ProductStockBadge";
+import { getProductImageStateClass } from "@/lib/products/product-image-state.mjs";
 
 export default function ProductCard({ product }) {
   const { addToCart } = useCart();
@@ -22,7 +24,6 @@ export default function ProductCard({ product }) {
   const productImage = product.images && product.images.length > 0 
     ? product.images[0] 
     : product.image || "/images/categories/skin-care.jpg";
-  const hasProductImage = Boolean(product.images?.length || product.image);
   async function addProductToBag() {
     if (checkingStock || !isProductAvailableForPurchase(product.inStock)) return;
     setCheckingStock(true);
@@ -49,7 +50,7 @@ export default function ProductCard({ product }) {
   }
 
   return (
-    <div className={`group relative flex min-w-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-all duration-300 hover:shadow-xl hover:shadow-[var(--color-primary)]/5 sm:rounded-3xl sm:p-5 ${product.inStock === false ? "opacity-70" : ""}`}>
+    <div className="group relative flex min-w-0 flex-col rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 transition-all duration-300 hover:shadow-xl hover:shadow-[var(--color-primary)]/5 sm:rounded-3xl sm:p-5">
       <button
         type="button"
         aria-label={wishlisted ? "Remove from Wishlist" : "Add to Wishlist"}
@@ -68,9 +69,10 @@ export default function ProductCard({ product }) {
           alt={product.name}
           fill
           unoptimized={!productImage.startsWith("/")}
-          className={`transition-transform duration-300 group-hover:scale-105 ${hasProductImage ? "object-contain p-2" : "object-cover"}`}
+          className={`object-cover transition-[filter,transform] duration-300 group-hover:scale-105 ${getProductImageStateClass(product.inStock)}`}
+          style={{ objectPosition: product.imagePositions?.[0] ?? "50% 50%" }}
         />
-        {product.inStock === false && <span className="absolute bottom-3 left-3 rounded-full bg-[var(--color-text)] px-3 py-1.5 text-[10px] font-semibold text-white">Out of Stock</span>}
+        <ProductStockBadge inStock={product.inStock} className="absolute bottom-3 left-3" />
       </Link>
 
       <div className="mb-1 flex min-w-0 items-center justify-between gap-2">

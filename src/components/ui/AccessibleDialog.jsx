@@ -7,6 +7,7 @@ export default function AccessibleDialog({
   children,
   onClose,
   labelledBy,
+  describedBy,
   className = "",
 }) {
   const dialogRef = useRef(null);
@@ -34,6 +35,7 @@ export default function AccessibleDialog({
     <dialog
       ref={dialogRef}
       aria-labelledby={labelledBy}
+      aria-describedby={describedBy}
       className={`app-dialog fixed inset-0 m-0 h-full w-full max-h-none max-w-none overflow-visible border-0 bg-transparent p-0 text-[var(--color-text)] ${className}`}
       onCancel={(event) => {
         event.preventDefault();

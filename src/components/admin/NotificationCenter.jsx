@@ -1,12 +1,13 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Bell, Check, CheckCheck, RefreshCw } from "lucide-react";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/constants/ToastContext";
 import { markAdminNotificationRead, markAllAdminNotificationsRead } from "@/app/admin/actions";
+import { attachNotificationPanelDismissal } from "@/lib/notification-panel-events.mjs";
 
 function notificationTitle(eventType) {
   if (eventType === "order_created") return "New customer order";
@@ -37,10 +38,20 @@ export default function NotificationCenter({ notifications = null, hasError = fa
   const [open, setOpen] = useState(false);
   const [pendingId, setPendingId] = useState("");
   const [isPending, startTransition] = useTransition();
+  const triggerRef = useRef(null);
   const panelRef = useRef(null);
   const router = useRouter();
   const { showToast } = useToast();
   const unreadCount = (notifications ?? []).filter((notification) => !notification.read_at).length;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    return attachNotificationPanelDismissal(document, {
+      trigger: triggerRef.current,
+      panel: panelRef.current,
+      onDismiss: () => setOpen(false),
+    });
+  }, [open]);
 
   function markOneRead(id) {
     if (isPending) return;
@@ -77,9 +88,8 @@ export default function NotificationCenter({ notifications = null, hasError = fa
   }
 
   return (
-    <div className="relative" ref={panelRef} onKeyDown={(event) => {
-      if (event.key === "Escape") setOpen(false);
-    }}>
+    <div className="relative">
+      <div ref={triggerRef}>
       <Button
         type="button"
         variant="ghost"
@@ -101,15 +111,16 @@ export default function NotificationCenter({ notifications = null, hasError = fa
           </span>
         )}
       </Button>
+      </div>
 
       {open && (
-        <section id="admin-notification-panel" aria-label="Recent notifications" className="absolute right-0 top-full z-50 mt-3 w-[min(22rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl">
-          <header className="flex items-center justify-between gap-3 border-b border-[var(--color-border)] px-4 py-3">
-            <div>
+        <section ref={panelRef} id="admin-notification-panel" aria-label="Recent notifications" className="fixed left-[max(0.75rem,env(safe-area-inset-left))] right-[max(0.75rem,env(safe-area-inset-right))] top-[max(4.5rem,env(safe-area-inset-top))] z-50 max-h-[calc(100dvh-6rem-env(safe-area-inset-bottom))] overflow-y-auto overscroll-contain rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl sm:absolute sm:left-auto sm:right-0 sm:top-full sm:mt-3 sm:max-h-[min(70vh,32rem)] sm:w-[min(22rem,calc(100vw-2rem))]">
+          <header className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] px-3 py-3 sm:gap-3 sm:px-4">
+            <div className="min-w-0">
               <h2 className="font-editorial text-base font-bold text-[var(--color-text)]">Notifications</h2>
               <p className="text-[11px] text-[var(--color-text-secondary)]">Persistent store and customer requests</p>
             </div>
-            <div className="flex items-center">
+            <div className="flex shrink-0 items-center">
               <Button type="button" variant="ghost" size="sm" disabled={isPending} onClick={refreshNotifications} aria-label="Refresh notifications" title="Refresh notifications" className="min-h-9 min-w-9 px-2">
                 <RefreshCw aria-hidden="true" className={`h-4 w-4 ${isPending ? "animate-spin" : ""}`} />
               </Button>
@@ -132,7 +143,7 @@ export default function NotificationCenter({ notifications = null, hasError = fa
           ) : !notifications?.length ? (
               <p className="p-5 text-sm text-[var(--color-text-secondary)]">You’re all caught up. New orders and customer requests will appear here.</p>
           ) : (
-            <ul className="max-h-[min(70vh,28rem)] divide-y divide-[var(--color-border)] overflow-y-auto">
+            <ul className="max-h-[calc(100dvh-12rem-env(safe-area-inset-bottom))] divide-y divide-[var(--color-border)] overflow-y-auto sm:max-h-[min(56vh,25rem)]">
               {notifications.map((notification) => (
                 <li key={notification.id} className={`flex items-start gap-3 px-4 py-3 ${notification.read_at ? "" : "bg-[var(--color-primary-light)]/40"}`}>
                   <span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${notification.read_at ? "bg-transparent" : "bg-[var(--color-primary)]"}`} />

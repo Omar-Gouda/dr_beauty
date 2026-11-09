@@ -8,7 +8,7 @@ import {
   normalizeAdminOrderFilters,
 } from "@/lib/admin-order-query.mjs";
 
-const adminProductSelection = "id,name,slug,description,ingredients,price,compare_at_price,currency,is_active,is_bestseller,category_id,brand_id,category:categories(id,name,slug),brand:brands(id,name),images:product_images(id,image_url,alt_text,sort_order),inventory:product_inventory(stock_quantity)";
+const adminProductSelection = "id,name,slug,description,ingredients,price,compare_at_price,currency,is_active,is_bestseller,category_id,brand_id,category:categories(id,name,slug),brand:brands(id,name),images:product_images(id,image_url,alt_text,sort_order,focal_x,focal_y),inventory:product_inventory(stock_quantity)";
 
 function mapAdminProduct(product) {
   return {
@@ -144,12 +144,65 @@ export async function getAdminCategories() {
 export async function getAdminPromotions() {
   const access = await getAdminRequestAccess();
   if (access.status !== "authorized") return { data: null, error: "Admin access or database configuration is unavailable." };
-  const { data, error } = await access.supabase
-    .from("promotions")
-    .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
-    .order("created_at", { ascending: false });
+  const [
+    { data, error },
+    { data: redemptionCounts, error: countsError },
+    { data: productTargets, error: productTargetsError },
+    { data: categoryTargets, error: categoryTargetsError },
+    { data: productOptions, error: productOptionsError },
+    { data: categoryOptions, error: categoryOptionsError },
+  ] = await Promise.all([
+    access.supabase
+      .from("promotions")
+      .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,first_purchase_only,application_scope,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
+      .order("created_at", { ascending: false }),
+    access.supabase.rpc("get_admin_promotion_redemption_counts"),
+    access.supabase.from("promotion_product_targets").select("promotion_id,product_id"),
+    access.supabase.from("promotion_category_targets").select("promotion_id,category_id"),
+    access.supabase.from("products").select("id,name,slug,is_active").order("name", { ascending: true }),
+    access.supabase.from("categories").select("id,name,slug,is_active").order("sort_order", { ascending: true }).order("name", { ascending: true }),
+  ]);
   if (error) return { data: null, error: "Discount codes could not be loaded. Check the promotions table and admin access." };
-  return { data: data ?? [], error: null };
+  if (countsError || !Array.isArray(redemptionCounts)) {
+    return { data: null, error: "Promotion redemption analytics could not be loaded. Check the admin database migration and access." };
+  }
+  if (productTargetsError || categoryTargetsError || productOptionsError || categoryOptionsError ||
+      !Array.isArray(productTargets) || !Array.isArray(categoryTargets) ||
+      !Array.isArray(productOptions) || !Array.isArray(categoryOptions)) {
+    return { data: null, error: "Promotion target data could not be loaded. Check the Phase 2A migration and admin access." };
+  }
+  const countsByPromotion = new Map(redemptionCounts.map((counts) => [counts.promotion_id, counts]));
+  const productTargetsByPromotion = new Map();
+  for (const target of productTargets) {
+    const current = productTargetsByPromotion.get(target.promotion_id) ?? [];
+    current.push(target.product_id);
+    productTargetsByPromotion.set(target.promotion_id, current);
+  }
+  const categoryTargetsByPromotion = new Map();
+  for (const target of categoryTargets) {
+    const current = categoryTargetsByPromotion.get(target.promotion_id) ?? [];
+    current.push(target.category_id);
+    categoryTargetsByPromotion.set(target.promotion_id, current);
+  }
+  return {
+    data: (data ?? []).map((promotion) => ({
+      ...promotion,
+      product_target_ids: productTargetsByPromotion.get(promotion.id) ?? [],
+      category_target_ids: categoryTargetsByPromotion.get(promotion.id) ?? [],
+      redemption_counts: countsByPromotion.get(promotion.id) ?? {
+        total_records: 0,
+        capacity_count: 0,
+        reserved_count: 0,
+        redeemed_count: 0,
+        cancelled_count: 0,
+        refunded_count: 0,
+        released_count: 0,
+      },
+    })),
+    productOptions,
+    categoryOptions,
+    error: null,
+  };
 }
 
 export async function getAdminShippingSettings() {

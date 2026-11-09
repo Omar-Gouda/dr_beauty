@@ -3,6 +3,8 @@
 import Image from "next/image";
 import { Trash2 } from "lucide-react";
 import ProductPrice from "@/components/products/ProductPrice";
+import ProductStockBadge from "@/components/products/ProductStockBadge";
+import { getProductImageStateClass } from "@/lib/products/product-image-state.mjs";
 
 export default function CartItem({ item, availabilityStatus, onUpdateQuantity, onRemove }) {
   const itemImage = item.images?.[0] || item.image || "/images/categories/skin-care.jpg";
@@ -11,7 +13,8 @@ export default function CartItem({ item, availabilityStatus, onUpdateQuantity, o
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-3 sm:gap-4 sm:p-4">
       <div className="relative h-20 w-20 rounded-xl overflow-hidden bg-white shrink-0 border border-[var(--color-border)]">
-        <Image src={itemImage} alt={item.name} fill unoptimized={!itemImage.startsWith("/")} className={hasProductImage ? "object-contain p-1" : "object-cover"} />
+        <Image src={itemImage} alt={item.name} fill unoptimized={!itemImage.startsWith("/")} className={`${hasProductImage ? "object-contain p-1" : "object-cover"} ${getProductImageStateClass(availabilityStatus !== "unavailable")}`} />
+        <ProductStockBadge inStock={availabilityStatus === "unavailable" ? false : null} className="absolute inset-x-1 bottom-1 px-1 py-1 text-center text-[8px]" />
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col">

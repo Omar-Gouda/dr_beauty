@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
+import ConfirmationDialog from "@/components/ui/ConfirmationDialog";
 import { deleteCustomerAddress, saveCustomerAddress, setDefaultCustomerAddress } from "@/app/(account)/actions";
 
 const inputClassName = "min-h-11 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 text-sm text-[var(--color-text)] focus:border-[var(--color-rose)] focus:outline-none focus:ring-2 focus:ring-[var(--color-rose)]/20";
@@ -38,6 +39,7 @@ export default function AddressBookManager({ addresses }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState(null);
+  const [addressToDelete, setAddressToDelete] = useState(null);
 
   function submit(event, action, resetOnSuccess = false) {
     event.preventDefault();
@@ -73,17 +75,21 @@ export default function AddressBookManager({ addresses }) {
     });
   }
 
-  function removeAddress(address) {
-    if (!window.confirm(`Delete the address for ${address.recipient_name}?`)) return;
+  function removeAddress() {
+    if (pending || !addressToDelete) return;
     const formData = new FormData();
-    formData.set("addressId", address.id);
+    formData.set("addressId", addressToDelete.id);
     setMessage(null);
     startTransition(async () => {
       try {
         const result = await deleteCustomerAddress(formData);
         setMessage(result);
-        if (result.ok) router.refresh();
+        setAddressToDelete(null);
+        if (result.ok) {
+          router.refresh();
+        }
       } catch {
+        setAddressToDelete(null);
         setMessage({ ok: false, message: "The address could not be deleted. Please try again." });
       }
     });
@@ -136,7 +142,7 @@ export default function AddressBookManager({ addresses }) {
                   <div className="flex flex-wrap gap-3 border-t border-[var(--color-border)] pt-4">
                     <Button type="submit" size="sm" disabled={pending}>{pending ? "Saving…" : "Save changes"}</Button>
                     {!address.is_default && <Button type="button" size="sm" variant="outline" disabled={pending} onClick={() => setDefault(address.id)}>Set as default</Button>}
-                    <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => removeAddress(address)}>Delete</Button>
+                    <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => setAddressToDelete(address)}>Delete</Button>
                   </div>
                 </form>
               </article>
@@ -144,6 +150,16 @@ export default function AddressBookManager({ addresses }) {
           </div>
         )}
       </section>
+
+      {addressToDelete && <ConfirmationDialog
+        title="Delete saved address?"
+        description={`Remove the saved delivery address for ${addressToDelete.recipient_name}. Existing orders and their delivery details will remain unchanged.`}
+        confirmLabel="Delete address"
+        pendingLabel="Deleting address…"
+        isPending={pending}
+        onCancel={() => setAddressToDelete(null)}
+        onConfirm={removeAddress}
+      />}
     </div>
   );
 }
