@@ -8,8 +8,9 @@ import {
   isAllowedAdminOrderTransition,
 } from "@/lib/admin-order-status.mjs";
 import { persistAdminOrderDiagnostic } from "@/lib/admin-order-diagnostics.server.mjs";
-import { buildWhatsAppClickToChatUrl, normalizeWhatsAppPhoneNumber } from "@/lib/whatsapp/messages.mjs";
+import { buildWhatsAppClickToChatUrl, buildWhatsAppOrderContext, normalizeWhatsAppPhoneNumber } from "@/lib/whatsapp/messages.mjs";
 import { validateProductPricing } from "@/lib/products/pricing.mjs";
+import { validatePromotionTiers } from "@/lib/promotion-tiers.mjs";
 import { isSafeExternalImageUrl, normalizeCategoryInput } from "@/lib/image-url.mjs";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -311,6 +312,8 @@ export async function savePromotion(input) {
   const targetPath = typeof input.targetPath === "string" ? input.targetPath.trim() : "/shop";
   const applicationScope = input.applicationScope;
   const firstPurchaseOnly = input.firstPurchaseOnly;
+  const tieredDiscountEnabled = input.tieredDiscountEnabled;
+  const promotionTiers = validatePromotionTiers(input.discountTiers, tieredDiscountEnabled);
   const productTargetIds = Array.isArray(input.productTargetIds) ? input.productTargetIds : null;
   const categoryTargetIds = Array.isArray(input.categoryTargetIds) ? input.categoryTargetIds : null;
   const startsAt = promotionTimestamp(input.startsAt);
@@ -319,6 +322,10 @@ export async function savePromotion(input) {
   const uniqueTargetIds = (ids) => ids &&
     ids.every((targetId) => typeof targetId === "string" && UUID_PATTERN.test(targetId)) &&
     new Set(ids.map((targetId) => targetId.toLowerCase())).size === ids.length;
+
+  if (typeof tieredDiscountEnabled !== "boolean" || promotionTiers === null) {
+    return { ok: false, message: "Tiered discounts need 1 to 25 valid tiers with unique subtotal thresholds. Turn tiers off or correct the tier values." };
+  }
 
   if ((id && !UUID_PATTERN.test(id)) || rawCode.length > 64 || !/^[A-Z0-9][A-Z0-9_-]{0,63}$/.test(code) ||
       title.length > 160 || (isFeatured && !title) || description.length > 1000 ||
@@ -362,11 +369,18 @@ export async function savePromotion(input) {
     announcement_priority: announcementPriority,
     first_purchase_only: firstPurchaseOnly,
     application_scope: applicationScope,
+    tiered_discount_enabled: tieredDiscountEnabled,
   };
   const { data, error } = await supabase.rpc("save_admin_promotion", {
     p_promotion: values,
     p_product_ids: productTargetIds,
     p_category_ids: categoryTargetIds,
+    p_tiers: promotionTiers.map((tier) => ({
+      minimum_subtotal: tier.minimumSubtotal,
+      discount_type: tier.discountType,
+      discount_value: tier.discountValue,
+      maximum_discount: tier.maximumDiscount,
+    })),
   });
   const savedPromotion = Array.isArray(data) ? data[0] : null;
   if (error || !savedPromotion) return { ok: false, message: "Discount code could not be saved. Check the code and selected targets." };
@@ -379,7 +393,7 @@ export async function savePromotion(input) {
   return {
     ok: true,
     message: id ? "Discount code updated." : "Discount code created.",
-    savedPromotion: savedPromotion.is_active ? savedPromotion : null,
+    savedPromotion: id ? null : { ...savedPromotion, discount_tiers: promotionTiers },
   };
 }
 
@@ -397,6 +411,24 @@ export async function setPromotionActive(promotionId, isActive) {
   revalidatePath("/shop");
   revalidatePath("/");
   return { ok: true, message: isActive ? "Discount code activated." : "Discount code deactivated." };
+}
+
+export async function updateStorefrontRankingVisibility(input) {
+  const supabase = await authorizedClient();
+  if (!supabase) return { ok: false, message: "Admin access is unavailable." };
+  if (typeof input?.showLovedByDrBeauty !== "boolean" || typeof input?.showDrBeautyElites !== "boolean") {
+    return { ok: false, message: "Choose whether each customer ranking should appear in the store." };
+  }
+  const { data, error } = await supabase.rpc("update_admin_storefront_ranking_visibility", {
+    p_show_loved_by_dr_beauty: input.showLovedByDrBeauty,
+    p_show_dr_beauty_elites: input.showDrBeautyElites,
+  });
+  if (error || data?.show_loved_by_dr_beauty !== input.showLovedByDrBeauty || data?.show_dr_beauty_elites !== input.showDrBeautyElites) {
+    return { ok: false, message: "Customer ranking visibility could not be saved." };
+  }
+  revalidatePath("/");
+  revalidatePath("/admin");
+  return { ok: true, message: "Store customer ranking visibility saved." };
 }
 
 export async function saveShippingSettings(input) {
@@ -473,7 +505,7 @@ export async function transitionAdminOrderStatus(formData) {
 
   const { data: currentOrder, error: lookupError } = await supabase
     .from("orders")
-    .select("order_status,order_number,customer_phone")
+    .select("order_status,order_number,customer_phone,created_at,payment_method,payment_status,subtotal,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,governorate,city,address_line,delivery_notes,items:order_items(product_name_snapshot,quantity,unit_price)")
     .eq("id", orderId)
     .maybeSingle();
   if (lookupError || !currentOrder) {
@@ -526,7 +558,8 @@ export async function transitionAdminOrderStatus(formData) {
     if (customerPhone) {
       whatsappUrl = buildWhatsAppClickToChatUrl(customerPhone, "admin.order_status", {
         orderReference: String(currentOrder.order_number),
-        orderStatus: newStatus.replaceAll("_", " "),
+        orderStatus: ({ pending_confirmation: "Pending confirmation", confirmed: "Confirmed", processing: "Processing", shipped: "Shipped", delivered: "Delivered", cancelled: "Cancelled" })[newStatus] ?? "Unavailable",
+        orderContext: buildWhatsAppOrderContext({ ...currentOrder, order_status: newStatus }),
       });
     }
   } catch {
@@ -586,7 +619,7 @@ export async function deleteAdminOrder(orderId) {
   let data;
   let error;
   try {
-    ({ data, error } = await supabase.rpc("delete_admin_order", { p_order_id: orderId }));
+    ({ data, error } = await supabase.rpc("delete_admin_order_with_archive", { p_order_id: orderId }));
   } catch {
     return { ok: false, message: "The order could not be deleted. Refresh and try again." };
   }
@@ -597,7 +630,14 @@ export async function deleteAdminOrder(orderId) {
     if (error.code === "P0002") return { ok: false, message: "This order no longer exists. Refresh the order list." };
     return { ok: false, message: "The order could not be deleted. Refresh and try again." };
   }
-  if (!result?.deleted) return { ok: false, message: "The order could not be deleted. Refresh and try again." };
+  if (!result?.deleted) {
+    return {
+      ok: false,
+      message: result?.blocked_by_archive
+        ? "The order was kept because its receipt archive could not be verified. The failure was recorded; retry after the archive issue is resolved."
+        : "The order could not be deleted. Refresh and try again.",
+    };
+  }
 
   revalidatePath("/admin/orders");
   revalidatePath("/admin");

@@ -6,17 +6,28 @@ import FeaturedProducts from "@/components/home/FeaturedProducts";
 import BenefitsSection from "@/components/home/BenefitsSection";
 import PromotionalBanner from "@/components/home/PromotionalBanner";
 import NewsletterSection from "@/components/home/NewsletterSection";
-import { getCatalogCategories, getCatalogProducts, getFeaturedPromotions } from "@/lib/catalog";
+import CustomerRankings from "@/components/home/CustomerRankings";
+import { getCatalogCategories, getCatalogProducts, getFeaturedPromotions, getPublicStorefrontCustomerRankings, getPublicStorefrontRankingSettings } from "@/lib/catalog";
 import Container from "@/components/ui/Container";
 import { Skeleton } from "@/components/ui/Skeleton";
 
+export const metadata = {
+  title: "Beauty & Skincare with Dr. Radwa Hassan",
+  description: "Explore thoughtfully selected skincare and beauty essentials from Dr. Beauty.",
+  alternates: { canonical: "/" },
+};
+
 async function StoreHomeContent() {
   await connection();
-  const [categoryResult, productResult, promotionResult] = await Promise.all([
+  const [categoryResult, productResult, promotionResult, rankingSettingsResult] = await Promise.all([
     getCatalogCategories(),
     getCatalogProducts({ featured: true, limit: 10 }),
     getFeaturedPromotions(),
+    getPublicStorefrontRankingSettings(),
   ]);
+  const rankingSettings = rankingSettingsResult.data;
+  const rankingsEnabled = rankingSettings.showLovedByDrBeauty || rankingSettings.showDrBeautyElites;
+  const rankingResult = rankingsEnabled ? await getPublicStorefrontCustomerRankings() : { data: null, error: false };
 
   return (
     <div className="flex flex-col w-full">
@@ -32,10 +43,13 @@ async function StoreHomeContent() {
       {/* 4. Bestsellers / Featured Products Section */}
       <FeaturedProducts products={productResult.data ?? []} error={Boolean(productResult.error)} />
 
-      {/* 5. Promotional Banner Section */}
+      {/* 5. Customer rankings use database analytics and remain opt-in by admin. */}
+      {rankingsEnabled && <CustomerRankings settings={rankingSettings} rankings={rankingResult.data} />}
+
+      {/* 6. Promotional Banner Section */}
       <PromotionalBanner promotions={promotionResult.data ?? []} />
 
-      {/* 6. Newsletter & Community Section */}
+      {/* 7. Newsletter & Community Section */}
       <NewsletterSection />
     </div>
   );

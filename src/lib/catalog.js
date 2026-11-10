@@ -166,6 +166,50 @@ async function getSupabase() {
   return createClient();
 }
 
+export async function getPublicStorefrontRankingSettings() {
+  const hidden = { showLovedByDrBeauty: false, showDrBeautyElites: false };
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return { data: hidden, error: true };
+    const { data, error } = await supabase.from("storefront_ranking_settings")
+      .select("show_loved_by_dr_beauty,show_dr_beauty_elites")
+      .maybeSingle();
+    if (error || !data) return { data: hidden, error: true };
+    return {
+      data: {
+        showLovedByDrBeauty: data.show_loved_by_dr_beauty === true,
+        showDrBeautyElites: data.show_dr_beauty_elites === true,
+      },
+      error: false,
+    };
+  } catch {
+    return { data: hidden, error: true };
+  }
+}
+
+export async function getPublicStorefrontCustomerRankings() {
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return { data: null, error: true };
+    const { data, error } = await supabase.rpc("get_public_storefront_customer_rankings");
+    if (error || !data || typeof data !== "object" || Array.isArray(data)) return { data: null, error: true };
+    const normalizeRows = (rows, limit) => Array.isArray(rows)
+      ? rows.slice(0, limit).flatMap((row) => typeof row?.display_name === "string"
+        ? [{ displayName: row.display_name.slice(0, 160) }]
+        : [])
+      : [];
+    return {
+      data: {
+        lovedByDrBeauty: normalizeRows(data.loved_by_dr_beauty, 5),
+        drBeautyElites: normalizeRows(data.dr_beauty_elites, 3),
+      },
+      error: false,
+    };
+  } catch {
+    return { data: null, error: true };
+  }
+}
+
 export async function getCatalogCategories() {
   try {
     const supabase = await getSupabase();

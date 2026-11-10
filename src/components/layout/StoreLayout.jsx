@@ -1,9 +1,8 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import AnnouncementBar from "@/components/layout/AnnouncementBar";
-import Navbar from "@/components/layout/Navbar";
+import SessionAwareNavbar from "@/components/layout/SessionAwareNavbar";
 import Footer from "@/components/layout/Footer";
-import MobileBottomNavigation from "@/components/layout/MobileBottomNavigation";
 import { getPublicDiscountAnnouncements } from "@/lib/catalog";
 
 async function CurrentAnnouncements() {
@@ -25,15 +24,14 @@ export function StoreAnnouncement() {
 
 export default function StoreLayout({ children, desktopChromeOnly = false }) {
   return (
-    <div className={desktopChromeOnly ? "flex flex-col lg:min-h-screen" : "flex min-h-screen flex-col pb-[calc(var(--mobile-bottom-nav-height)+env(safe-area-inset-bottom))] md:pb-0"}>
+    <div className={desktopChromeOnly ? "flex flex-col lg:min-h-screen" : "flex min-h-screen flex-col"}>
       {!desktopChromeOnly && <StoreAnnouncement />}
 
-      <Navbar desktopOnly={desktopChromeOnly} />
+      <SessionAwareNavbar desktopOnly={desktopChromeOnly} />
 
       <div className="flex-1">{children}</div>
 
       <Footer desktopOnly={desktopChromeOnly} />
-      {!desktopChromeOnly && <MobileBottomNavigation />}
     </div>
   );
 }

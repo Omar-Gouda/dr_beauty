@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { LegalPage, LegalSection, OwnerConfirmation } from "@/components/legal/LegalPage";
 
+export const metadata = {
+  title: "About Dr. Beauty",
+  description: "Learn about Dr. Beauty and our considered approach to beauty and skincare shopping.",
+  alternates: { canonical: "/about" },
+};
+
 export default function AboutPage() {
   return (
     <LegalPage

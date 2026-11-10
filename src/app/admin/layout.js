@@ -40,7 +40,7 @@ async function AuthorizedAdminLayout({ children }) {
       <AdminSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <AdminHeader userEmail={access.user.email} notifications={notificationResult.data} notificationError={notificationResult.error} />
-        <main className="min-w-0 flex-1 p-3 sm:p-6 lg:p-10">{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 sm:py-8 lg:px-9 lg:py-9">{children}</main>
       </div>
     </div>
   );

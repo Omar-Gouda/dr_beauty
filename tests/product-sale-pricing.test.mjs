@@ -75,7 +75,7 @@ test("checkout and order snapshots charge the database selling price; promotion 
     read("../src/app/(checkout)/checkout/actions.js"),
     read("../supabase/migrations/20261112000000_checkout_discount_least_expression_fix.sql"),
   ]);
-  assert.match(checkoutAction, /select\("id,price,category_id"\)/);
+  assert.match(checkoutAction, /get_promotion_tier_quote/);
   assert.match(checkoutAction, /p_items: items/);
   assert.doesNotMatch(checkoutAction, /p_price|compareAtPrice/);
   assert.match(orderRpc, /p\.price as unit_price/);

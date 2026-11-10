@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import { getAuthCallbackUrl } from "@/lib/site-url.mjs";
+import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from "@/lib/legal/policy-versions.mjs";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -87,7 +88,12 @@ export async function login(_previousState, formData) {
     const { data: isAdmin, error: roleError } = await supabase.rpc("is_current_user_admin");
     if (!roleError && isAdmin === true) fallback = "/admin";
   }
-  redirect(safePath(requestedNext, fallback));
+  const destination = safePath(requestedNext, fallback);
+  const { data: consentStatus, error: consentError } = await supabase.rpc("get_current_policy_consent_status");
+  if (consentError || typeof consentStatus?.needs_acceptance !== "boolean" || consentStatus.needs_acceptance) {
+    redirect(`/accept-policies?next=${encodeURIComponent(destination)}`);
+  }
+  redirect(destination);
 }
 
 export async function register(_previousState, formData) {
@@ -114,6 +120,9 @@ export async function register(_previousState, formData) {
     return { error: "Choose a password between 8 and 128 characters." };
   }
   if (password !== passwordConfirmation) return { error: "The passwords do not match." };
+  if (readText(formData, "policyConsent") !== "accepted") {
+    return { error: "Please accept the Terms & Conditions and Privacy Policy to create an account." };
+  }
 
   const supabase = await createClient();
   let emailRedirectTo;
@@ -126,7 +135,13 @@ export async function register(_previousState, formData) {
     email,
     password,
     options: {
-      data: { full_name: fullName, phone },
+      data: {
+        full_name: fullName,
+        phone,
+        policy_consent: true,
+        accepted_terms_version: CURRENT_TERMS_VERSION,
+        accepted_privacy_version: CURRENT_PRIVACY_VERSION,
+      },
       emailRedirectTo,
     },
   });
@@ -211,6 +226,11 @@ export async function updateProfile(_previousState, formData) {
 
   const fullName = readText(formData, "fullName");
   const phone = readText(formData, "phone");
+  const showPublicRankingValue = formData.get("showPublicRanking");
+  if (showPublicRankingValue !== "true" && showPublicRankingValue !== "false") {
+    return { error: "Choose whether your name may appear in customer rankings." };
+  }
+  const showPublicRanking = showPublicRankingValue === "true";
   if (fullName.length < 1 || fullName.length > 160) {
     return { error: "Enter your name using 1 to 160 characters." };
   }
@@ -222,7 +242,7 @@ export async function updateProfile(_previousState, formData) {
 
   const { data, error } = await supabase
     .from("profiles")
-    .update({ full_name: fullName, phone: phone || null })
+    .update({ full_name: fullName, phone: phone || null, show_public_ranking: showPublicRanking })
     .eq("id", user.id)
     .select("id")
     .maybeSingle();
@@ -361,4 +381,23 @@ export async function logout() {
   }
 
   redirect(failed ? "/login?notice=sign-out-failed" : "/login?notice=signed-out");
+}
+
+export async function acceptCurrentPolicies(_previousState, formData) {
+  if (readText(formData, "policyConsent") !== "accepted") {
+    return { error: "Please confirm that you accept both current policies." };
+  }
+
+  const configurationMessage = missingConfigurationMessage();
+  if (configurationMessage) return { error: configurationMessage };
+
+  const supabase = await createClient();
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) return { error: "Sign in to record your policy acceptance." };
+
+  const { error } = await supabase.rpc("accept_current_policy_versions");
+  if (error) return { error: "We could not save your acceptance. Please try again." };
+
+  const next = safePath(readText(formData, "next"), "/profile");
+  redirect(next);
 }

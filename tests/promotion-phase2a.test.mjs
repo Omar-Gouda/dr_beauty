@@ -264,10 +264,10 @@ test("checkout preview uses advisory eligibility and database-backed target iden
     read("../src/app/(checkout)/checkout/actions.js"),
     read("../supabase/migrations/20261130000000_phase2a_first_purchase_promotion_targeting.sql"),
   ]);
-  assert.match(actions, /select\("id,price,category_id"\)/);
+  assert.match(actions, /get_promotion_tier_quote/);
   assert.match(actions, /rpc\([\s\S]*?get_promotion_preview_eligibility/);
   assert.match(actions, /eligibility\.first_purchase_eligible/);
-  assert.match(actions, /calculateEligiblePromotionAmounts/);
+  assert.match(actions, /p_items: items/);
   assert.match(actions, /finalCheckRequired: true/);
   assert.match(migration, /grant execute on function public\.get_promotion_preview_eligibility\(uuid\) to authenticated/);
   assert.match(migration, /revoke all on function public\.get_promotion_preview_eligibility\(uuid\)[\s\S]*?from public, anon, authenticated, service_role/);

@@ -65,9 +65,10 @@ test("nested account store shells leave one mobile shell and retain desktop chro
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8"))),
   ]);
 
-  assert.match(accountLayout, /<MobileBottomNavigation\s*\/>/);
-  assert.match(storeLayout, /!desktopChromeOnly && <MobileBottomNavigation/);
-  assert.match(storeLayout, /<Navbar desktopOnly=\{desktopChromeOnly\}/);
+  assert.match(accountLayout, /<SessionAwareNavbar mobileOnly\s*\/>/);
+  assert.doesNotMatch(accountLayout, /MobileBottomNavigation/);
+  assert.doesNotMatch(storeLayout, /MobileBottomNavigation/);
+  assert.match(storeLayout, /<SessionAwareNavbar desktopOnly=\{desktopChromeOnly\}/);
   assert.match(storeLayout, /<Footer desktopOnly=\{desktopChromeOnly\}/);
   for (const layout of nestedLayouts) assert.match(layout, /<StoreLayout desktopChromeOnly>/);
 });

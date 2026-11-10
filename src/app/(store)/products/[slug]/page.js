@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import { connection } from "next/server";
 import { notFound } from "next/navigation";
 import Container from "@/components/ui/Container";
@@ -7,12 +7,31 @@ import CatalogState from "@/components/catalog/CatalogState";
 import ProductDetail from "@/components/products/ProductDetail";
 import { getCatalogProductBySlug, getCatalogProducts } from "@/lib/catalog";
 
+const getProductForRoute = cache(getCatalogProductBySlug);
+
+export async function generateMetadata({ params }) {
+  const { slug } = await params;
+  const result = await getProductForRoute(slug);
+  if (result.error || !result.data) {
+    return { title: "Beauty Product", description: "Explore skincare and beauty products from Dr. Beauty.", alternates: { canonical: `/products/${encodeURIComponent(slug)}` } };
+  }
+  const product = result.data;
+  const description = product.description?.trim() || `Explore ${product.name} at Dr. Beauty. Review product details and availability.`;
+  return {
+    title: product.name,
+    description: description.slice(0, 300),
+    alternates: { canonical: `/products/${encodeURIComponent(slug)}` },
+    openGraph: { title: product.name, description: description.slice(0, 300), images: product.images?.[0] ? [product.images[0]] : undefined },
+    twitter: { card: "summary_large_image", title: product.name, description: description.slice(0, 300), images: product.images?.[0] ? [product.images[0]] : undefined },
+  };
+}
+
 async function ProductDetailContent({ params }) {
   const { slug } = await params;
   // The server Supabase client inspects the request session; Auth expiry checks
   // also read the current time, so keep this query in request-time rendering.
   await connection();
-  const productResult = await getCatalogProductBySlug(slug);
+  const productResult = await getProductForRoute(slug);
 
   if (productResult.error) {
     return <CatalogState message="Product details are temporarily unavailable. Please try again later." />;

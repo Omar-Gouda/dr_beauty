@@ -60,6 +60,8 @@ export default function CustomerRequestForm({ requestType, email, phone, product
     if (useWhatsAppDraft) {
       const selectedCategory = categories.find((item) => item.value === category)?.label ?? category;
       const selectedProduct = products?.find((product) => product.id === productId)?.name ?? "No specific product selected";
+      const selectedOrder = orders?.find((order) => order.id === orderId);
+      const supportCategory = selectedCategory || "General support";
       const destination = getWhatsAppSupportDestination();
       try {
         if (destination) {
@@ -69,10 +71,20 @@ export default function CustomerRequestForm({ requestType, email, phone, product
               productName: selectedProduct,
               question: question.trim(),
             })
-            : buildWhatsAppClickToChatUrl(destination, "support.request", {
-              category: selectedCategory,
-              question: question.trim(),
-            });
+            : buildWhatsAppClickToChatUrl(destination,
+              ["refund_request", "return_exchange"].includes(category) ? "support.return_request" : "support.request",
+              ["refund_request", "return_exchange"].includes(category) ? {
+                category: supportCategory,
+                question: question.trim(),
+                requestedAction: category === "refund_request" ? "Review refund eligibility and explain the next steps." : "Review the return or exchange request and explain the next steps.",
+                orderReference: selectedOrder?.order_number ? String(selectedOrder.order_number) : "",
+                productName: selectedProduct,
+              } : {
+                category: supportCategory,
+                question: question.trim(),
+                orderReference: selectedOrder?.order_number ? String(selectedOrder.order_number) : "",
+                productName: selectedProduct === "No specific product selected" ? "" : selectedProduct,
+              });
         }
       } catch {
         url = null;
@@ -214,7 +226,7 @@ export default function CustomerRequestForm({ requestType, email, phone, product
           className="w-full resize-y rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-sm text-[var(--color-text)] outline-none transition focus-visible:border-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]/20 disabled:opacity-60"
         />
         <p className="mt-2 text-xs text-[var(--color-text-secondary)]">10–{useWhatsAppDraft ? "1,200" : "4,000"} characters. Do not include payment card details.</p>
-        {useWhatsAppDraft && <p className="mt-2 text-xs text-[var(--color-text-secondary)]">Your category and question will be included in one WhatsApp draft after the request is saved. Review it before sending; no message is sent automatically.</p>}
+        {useWhatsAppDraft && <p className="mt-2 text-xs text-[var(--color-text-secondary)]">After saving this request, the selected category, order number and product (when provided), and your description may appear in a WhatsApp draft. Review the complete message and choose whether to send it; no message is sent automatically. WhatsApp will receive the information only if you send the draft.</p>}
       </div>
 
       <div>

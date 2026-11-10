@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, cache } from "react";
 import { connection } from "next/server";
 import Container from "@/components/ui/Container";
 import { Skeleton } from "@/components/ui/Skeleton";
@@ -7,10 +7,29 @@ import ProductCard from "@/components/products/ProductCard";
 import CatalogState from "@/components/catalog/CatalogState";
 import { getCatalogCategoryBySlug, getCatalogProducts } from "@/lib/catalog";
 
+const getCategoryForRoute = cache(getCatalogCategoryBySlug);
+
+export async function generateMetadata({ params }) {
+  const { slug } = await params;
+  const result = await getCategoryForRoute(slug);
+  if (result.error || !result.data) {
+    return { title: "Beauty Category", description: "Browse curated skincare and beauty categories at Dr. Beauty.", alternates: { canonical: `/categories/${encodeURIComponent(slug)}` } };
+  }
+  const category = result.data;
+  const description = category.description?.trim() || `Browse ${category.name} products at Dr. Beauty.`;
+  return {
+    title: category.name,
+    description: description.slice(0, 300),
+    alternates: { canonical: `/categories/${encodeURIComponent(slug)}` },
+    openGraph: { title: category.name, description: description.slice(0, 300), images: category.imageUrl ? [category.imageUrl] : undefined },
+    twitter: { card: "summary_large_image", title: category.name, description: description.slice(0, 300), images: category.imageUrl ? [category.imageUrl] : undefined },
+  };
+}
+
 async function CategoryContent({ params }) {
   const { slug } = await params;
   await connection();
-  const categoryResult = await getCatalogCategoryBySlug(slug);
+  const categoryResult = await getCategoryForRoute(slug);
 
   if (categoryResult.error) {
     return <CatalogState message="Categories are temporarily unavailable. Please try again later." />;

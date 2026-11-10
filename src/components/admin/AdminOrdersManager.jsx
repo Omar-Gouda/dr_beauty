@@ -12,6 +12,8 @@ import ConfirmationDialog from "@/components/ui/ConfirmationDialog";
 import { deleteAdminOrder } from "@/app/admin/actions";
 import { useToast } from "@/constants/ToastContext";
 import { buildAdminOrdersPageHref } from "@/lib/admin-order-query.mjs";
+import { getOrderItemFinancials } from "@/lib/order-item-financials.mjs";
+import { buildWhatsAppOrderContext } from "@/lib/whatsapp/messages.mjs";
 
 const statusOptions = [
   { value: "all", label: "All order statuses" },
@@ -73,7 +75,7 @@ function OrderDetails({ order }) {
           <p>{order.customer_name}</p>
           <p>{order.customer_phone}</p>
           <p>{order.customer_email || "No email supplied"}</p>
-          <WhatsAppAction className="mt-3" destination={order.customer_phone} templateId="admin.order_contact" variables={{ orderReference: order.order_number }} unavailableMessage="Customer contact requires a valid Egyptian or international phone number.">
+          <WhatsAppAction className="mt-3" destination={order.customer_phone} templateId="admin.order_contact" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }} unavailableMessage="Customer contact requires a valid Egyptian or international phone number.">
             Contact Customer on WhatsApp
           </WhatsAppAction>
         </section>
@@ -93,14 +95,24 @@ function OrderDetails({ order }) {
             <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2 text-[var(--color-text-secondary)]">
               <div><dt>Quantity</dt><dd className="font-medium text-[var(--color-text)]">{item.quantity}</dd></div>
               <div><dt>Unit price</dt><dd className="font-medium text-[var(--color-text)]">EGP {Number(item.unit_price).toFixed(2)}</dd></div>
-              <div className="col-span-2 border-t border-[var(--color-border)] pt-2"><dt>Line total</dt><dd className="font-semibold text-[var(--color-text)]">EGP {Number(item.line_total).toFixed(2)}</dd></div>
+              <div className="col-span-2 border-t border-[var(--color-border)] pt-2"><dt>Original item subtotal</dt><dd className="font-semibold text-[var(--color-text)]">EGP {Number(item.line_total).toFixed(2)}</dd></div>
+              {(() => {
+                const amounts = getOrderItemFinancials(item);
+                return <>
+                  <div className="col-span-2"><dt>Promotion discount</dt><dd className="font-medium text-[var(--color-text)]">{amounts?.allocationAvailable ? `EGP ${ (amounts.promotionDiscountCents / 100).toFixed(2)}` : "Not recorded for this order"}</dd></div>
+                  <div className="col-span-2"><dt>Final item total</dt><dd className="font-semibold text-[var(--color-text)]">{amounts?.allocationAvailable ? `EGP ${(amounts.finalItemTotalCents / 100).toFixed(2)}` : "Unavailable for this order"}</dd></div>
+                </>;
+              })()}
             </dl>
           </article>)}
         </div>
         <div tabIndex={0} role="region" aria-label="Order item details; scroll horizontally to view all columns" className="hidden overflow-x-auto rounded-2xl border border-[var(--color-border)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)] sm:block">
           <table className="w-full text-left text-xs">
-            <thead><tr className="bg-[var(--color-background)] text-[var(--color-text-secondary)]"><th className="p-3">Product snapshot</th><th className="p-3">Quantity</th><th className="p-3">Unit price</th><th className="p-3">Line total</th></tr></thead>
-            <tbody className="divide-y divide-[var(--color-border)]">{(order.items ?? []).map((item) => <tr key={item.id}><td className="p-3">{item.product_name_snapshot}</td><td className="p-3">{item.quantity}</td><td className="p-3">EGP {Number(item.unit_price).toFixed(2)}</td><td className="p-3">EGP {Number(item.line_total).toFixed(2)}</td></tr>)}</tbody>
+            <thead><tr className="bg-[var(--color-background)] text-[var(--color-text-secondary)]"><th className="p-3">Product snapshot</th><th className="p-3">Quantity</th><th className="p-3">Unit price</th><th className="p-3">Original subtotal</th><th className="p-3">Promotion discount</th><th className="p-3">Final item total</th></tr></thead>
+            <tbody className="divide-y divide-[var(--color-border)]">{(order.items ?? []).map((item) => {
+              const amounts = getOrderItemFinancials(item);
+              return <tr key={item.id}><td className="p-3">{item.product_name_snapshot}</td><td className="p-3">{item.quantity}</td><td className="p-3">EGP {Number(item.unit_price).toFixed(2)}</td><td className="p-3">EGP {Number(item.line_total).toFixed(2)}</td><td className="p-3">{amounts?.allocationAvailable ? `EGP ${(amounts.promotionDiscountCents / 100).toFixed(2)}` : "Not recorded"}</td><td className="p-3">{amounts?.allocationAvailable ? `EGP ${(amounts.finalItemTotalCents / 100).toFixed(2)}` : "Not recorded"}</td></tr>;
+            })}</tbody>
           </table>
         </div>
       </section>
@@ -114,7 +126,8 @@ function OrderDetails({ order }) {
         <span>Subtotal: <b>EGP {Number(order.subtotal).toFixed(2)}</b></span>
         <span>Shipping fee: <b>EGP {Number(order.shipping_fee_amount ?? order.shipping_amount).toFixed(2)}</b></span>
         {Number(order.shipping_discount_amount) > 0 && <span>Shipping discount: <b>− EGP {Number(order.shipping_discount_amount).toFixed(2)}</b></span>}
-        <span>Discount: <b>EGP {Number(order.discount_amount).toFixed(2)}</b></span>
+        {order.promotion_code_snapshot && <span>Promotion: <b>{order.promotion_code_snapshot}</b></span>}
+        <span>Total promotion discount: <b>EGP {Number(order.discount_amount).toFixed(2)}</b></span>
         <span className="text-sm">Total: <b>EGP {Number(order.total_amount).toFixed(2)}</b></span>
       </div>
       <OrderLifecycleControls key={`${order.id}-${order.order_status}`} order={order} />

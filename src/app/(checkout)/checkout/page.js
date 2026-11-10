@@ -6,6 +6,7 @@ import Container from "@/components/ui/Container";
 import { BrandLoading, Skeleton } from "@/components/ui/Skeleton";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
 async function CheckoutContent() {
   if (getMissingSupabaseEnv().length > 0) {
@@ -25,6 +26,7 @@ async function CheckoutContent() {
     user = null;
   }
   if (!user) redirect("/login?next=%2Fcheckout");
+  await redirectForPolicyAcceptance(supabase, "/checkout");
 
   const [profileResult, addressResult, shippingResult] = await Promise.all([
     supabase.from("profiles").select("full_name,phone").eq("id", user.id).maybeSingle(),

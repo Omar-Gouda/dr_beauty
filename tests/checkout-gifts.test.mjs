@@ -50,14 +50,24 @@ test("gift packaging amount is read from server configuration and bound to an id
   assert.doesNotMatch(migration, /p_gift_packaging_fee|p_total_amount/);
 });
 
-test("pathname-aware mobile navigation stays inside Suspense and remains mobile-only", async () => {
-  const [navigation, css] = await Promise.all([
-    read("../src/components/layout/MobileBottomNavigation.jsx"),
+test("mobile navigation uses an accessible hamburger dialog instead of a fixed footer bar", async () => {
+  const [navigation, css, storeLayout, accountLayout, checkoutLayout, footer] = await Promise.all([
+    read("../src/components/layout/Navbar.jsx"),
     read("../src/app/globals.css"),
+    read("../src/components/layout/StoreLayout.jsx"),
+    read("../src/app/(account)/layout.js"),
+    read("../src/app/(checkout)/layout.js"),
+    read("../src/components/layout/Footer.jsx"),
   ]);
-  assert.match(navigation, /function PathnameAwareNavigation\(\)[\s\S]*?usePathname\(\)/);
-  assert.match(navigation, /<Suspense fallback=\{<MobileNavigationFallback \/>\}>\s*<PathnameAwareNavigation \/>\s*<\/Suspense>/);
-  assert.match(navigation, /isCurrentDestination\(pathname, href\)/);
-  assert.match(css, /\.mobile-bottom-nav\s*\{[^}]*display:\s*none/s);
-  assert.match(css, /@media\s*\(max-width:\s*767px\)\s*\{\s*\.mobile-bottom-nav\s*\{\s*display:\s*grid/s);
+  assert.match(navigation, /aria-label="Open navigation menu"/);
+  assert.match(navigation, /<AccessibleDialog onClose=\{closeMobileMenu\}/);
+  assert.match(navigation, /document\.body\.style\.overflow = "hidden"/);
+  assert.match(navigation, /onClick=\{closeMobileMenu\}/);
+  assert.match(navigation, /Dr\. Radwa Hassan/);
+  assert.match(css, /mobile-menu-panel/);
+  assert.match(css, /env\(safe-area-inset-top\)/);
+  assert.match(css, /prefers-reduced-motion: reduce/);
+  for (const layout of [storeLayout, accountLayout, checkoutLayout]) assert.doesNotMatch(layout, /MobileBottomNavigation/);
+  assert.doesNotMatch(footer, /aria-label="Customer care and store links"/);
+  assert.doesNotMatch(css, /mobile-bottom-nav/);
 });

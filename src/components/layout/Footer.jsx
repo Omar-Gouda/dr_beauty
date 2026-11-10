@@ -15,8 +15,8 @@ const footerLinks = [
 ];
 
 const legalLinks = [
-  { href: "/terms", label: "Terms & Conditions" },
-  { href: "/privacy", label: "Privacy Policy" },
+  { href: "/terms-and-conditions", label: "Terms & Conditions" },
+  { href: "/privacy-policy", label: "Privacy Policy" },
 ];
 
 export default function Footer({ mobileOnly = false, desktopOnly = false }) {
@@ -77,11 +77,6 @@ export default function Footer({ mobileOnly = false, desktopOnly = false }) {
           </div>
         </div>
 
-        <div className="border-t border-[var(--color-border)] py-6 text-center">
-          <p className="text-xs text-[var(--color-text-secondary)]">
-            © 2026 Dr. Beauty. All rights reserved.
-          </p>
-        </div>
       </Container>
       </div>
 
@@ -91,16 +86,21 @@ export default function Footer({ mobileOnly = false, desktopOnly = false }) {
           <p className="mt-2 max-w-sm text-xs leading-5 text-[var(--color-text-secondary)]">
             Science-based skincare and beauty essentials for healthy, confident skin.
           </p>
-          <nav aria-label="Customer care and store links" className="mt-5 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-[var(--color-border)] pt-4">
-            {[...footerLinks, ...legalLinks].map((link) => (
+          <nav aria-label="Policies" className="mt-5 grid grid-cols-2 gap-x-4 gap-y-1 border-t border-[var(--color-border)] pt-4">
+            {legalLinks.map((link) => (
               <Link key={link.href} href={link.href} className="inline-flex min-h-11 items-center text-xs font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-primary)] focus-visible:rounded focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">
                 {link.label}
               </Link>
             ))}
           </nav>
-          <p className="mt-3 border-t border-[var(--color-border)] pt-4 text-center text-[10px] text-[var(--color-text-secondary)]">© 2026 Dr. Beauty. All rights reserved.</p>
         </Container>
       </div>
+      <Container>
+        <div className="flex flex-col items-center justify-between gap-2 border-t border-[var(--color-border)] py-5 text-center sm:flex-row sm:text-left">
+          <p className="text-xs text-[var(--color-text-secondary)]">© 2026 Dr. Beauty. All rights reserved.</p>
+          <p className="text-xs text-[var(--color-text-secondary)]">Developed by <a href="mailto:omarg.dev1@gmail.com" className="font-editorial text-sm font-semibold text-[var(--color-rose)] transition-colors hover:text-[var(--color-primary-hover)] focus-visible:rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">Omar Gouda</a></p>
+        </div>
+      </Container>
     </footer>
   );
 }

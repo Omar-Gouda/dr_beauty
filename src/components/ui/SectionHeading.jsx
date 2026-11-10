@@ -4,6 +4,7 @@ export default function SectionHeading({
   description,
   align = "right",
   className = "",
+  id,
 }) {
   const alignmentClasses = {
     right: "text-right",
@@ -21,7 +22,7 @@ export default function SectionHeading({
         </p>
       ) : null}
 
-      <h2 className="font-editorial text-2xl font-bold leading-tight text-[var(--color-text)] sm:text-3xl">
+      <h2 id={id} className="font-editorial text-2xl font-bold leading-tight text-[var(--color-text)] sm:text-3xl">
         {title}
       </h2>
 

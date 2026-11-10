@@ -195,6 +195,13 @@ function formatEgp(value) {
   return `EGP ${grouped}.${fraction.padEnd(2, "0")}`;
 }
 
+function formatOrderDate(value) {
+  if (!isTimestamp(value)) failSnapshot();
+  return new Intl.DateTimeFormat("en-EG", {
+    year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Africa/Cairo",
+  }).format(new Date(value));
+}
+
 function getCopy(snapshot) {
   if (snapshot.delivery_type === "order_confirmation") {
     return {
@@ -230,6 +237,13 @@ export function renderOrderEmail(snapshot) {
     `• ${item.product_name_snapshot} × ${item.quantity} — ${formatEgp(item.line_total)}`
   )).join("\n");
 
+  const detailedRowsHtml = snapshot.items.map((item) => (
+    `<li>${escapeHtml(item.product_name_snapshot)} x ${item.quantity} · ${formatEgp(item.unit_price)} each · item subtotal ${formatEgp(item.line_total)}</li>`
+  )).join("");
+  const detailedRowsText = snapshot.items.map((item) => (
+    `- ${item.product_name_snapshot} x ${item.quantity} · ${formatEgp(item.unit_price)} each · item subtotal ${formatEgp(item.line_total)}`
+  )).join("\n");
+
   let shipmentHtml = "";
   let shipmentText = "";
   if (snapshot.notification_status === "shipped") {
@@ -245,13 +259,20 @@ export function renderOrderEmail(snapshot) {
   }
 
   const total = formatEgp(snapshot.total_amount);
+  const orderDate = formatOrderDate(snapshot.order_created_at);
+  const financialDetailsHtml = `<dl><dt>Items subtotal</dt><dd>${formatEgp(snapshot.subtotal)}</dd><dt>Promotion discount</dt><dd>${formatEgp(snapshot.discount_amount)}</dd><dt>Delivery charge</dt><dd>${formatEgp(snapshot.shipping_amount)}</dd><dt>Total due on delivery</dt><dd><strong>${total}</strong></dd></dl>`;
+  const financialDetailsText = `Items subtotal: ${formatEgp(snapshot.subtotal)}\nPromotion discount: ${formatEgp(snapshot.discount_amount)}\nDelivery charge: ${formatEgp(snapshot.shipping_amount)}\nTotal due on delivery: ${total}`;
   const safeName = escapeHtml(snapshot.customer_name);
   const html = `<main><p>Hello ${safeName},</p><h1>${escapeHtml(copy.heading)}</h1>`
-    + `<p>${escapeHtml(copy.message)}</p><p>Order #${snapshot.order_number}</p>`
-    + `<ul>${rowsHtml}</ul>${shipmentHtml}<p>Total: ${total}</p></main>`;
+    + `<p>${escapeHtml(copy.message)}</p><p>Order #${snapshot.order_number} · Placed ${escapeHtml(orderDate)} (Cairo time)</p>`
+    + `<ul>${detailedRowsHtml}</ul>${shipmentHtml}${financialDetailsHtml}`
+    + (snapshot.delivery_type === "order_confirmation" ? `<p>Payment: Cash on delivery. Amount is due upon delivery; this email does not mean payment has been collected.</p><p>Estimated delivery: 5–7 days. Timing may vary with order volume, carrier availability, and delivery location.</p>` : "")
+    + `<p>This email is an order confirmation/summary, not a tax invoice or a substitute for a legally required receipt.</p></main>`;
   const text = `Hello ${snapshot.customer_name},\n\n${copy.heading}\n${copy.message}`
-    + `\nOrder #${snapshot.order_number}\n\n${rowsText}\n\n${shipmentText}`
-    + `\nTotal: ${total}`;
+    + `\nOrder #${snapshot.order_number}\nPlaced ${orderDate} (Cairo time)\n\n${detailedRowsText}\n\n${shipmentText}`
+    + `\n${financialDetailsText}`
+    + (snapshot.delivery_type === "order_confirmation" ? "\nPayment: Cash on delivery. Amount is due upon delivery; this email does not mean payment has been collected.\nEstimated delivery: 5–7 days; timing may vary with order volume, carrier availability, and delivery location." : "")
+    + "\nThis email is an order confirmation/summary, not a tax invoice or a substitute for a legally required receipt.";
 
   return { subject: copy.subject, html, text };
 }

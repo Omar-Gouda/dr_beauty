@@ -5,22 +5,31 @@ import test from "node:test";
 const source = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("manual order deletion is server-authorized and calls the secure RPC", async () => {
-  const [actions, manager, migration] = await Promise.all([
+  const [actions, manager, originalMigration, retention] = await Promise.all([
     source("../src/app/admin/actions.js"),
     source("../src/components/admin/AdminOrdersManager.jsx"),
     source("../supabase/migrations/20261120000000_order_retention_deletion_redemption_ledger.sql"),
+    source("../supabase/migrations/20261209000000_receipt_archive_before_order_retention.sql"),
   ]);
   const action = actions.match(/export async function deleteAdminOrder[\s\S]*?(?=\nexport async function|$)/)?.[0] ?? "";
   assert.match(action, /authorizedClient\(\)/);
-  assert.match(action, /rpc\("delete_admin_order", \{ p_order_id: orderId \}\)/);
+  assert.match(action, /rpc\("delete_admin_order_with_archive", \{ p_order_id: orderId \}\)/);
+  assert.match(action, /blocked_by_archive/);
   assert.match(action, /42501/);
   assert.match(action, /revalidatePath\("\/admin\/orders"\)/);
   assert.match(manager, /<ConfirmationDialog/);
   assert.match(manager, /setIsConfirmOpen\(true\)/);
   assert.match(manager, /deleteAdminOrder\(order\.id\)/);
   assert.match(manager, /router\.refresh\(\)/);
-  const rpc = migration.match(/create function public\.delete_admin_order[\s\S]*?\$\$;/i)?.[0] ?? "";
+  const rpc = originalMigration.match(/create function public\.delete_admin_order[\s\S]*?\$\$;/i)?.[0] ?? "";
   assert.match(rpc, /auth\.uid\(\) is null or not coalesce\(private\.is_admin\(\), false\)/i);
+  const archivalRpc = retention.match(/create function public\.delete_admin_order_with_archive[\s\S]*?\$\$;/i)?.[0] ?? "";
+  assert.match(archivalRpc, /private\.hard_delete_order_rows\(p_order_id\)/);
+  assert.match(archivalRpc, /receipt_archive_failures/);
+  assert.match(retention, /private\.archive_order_snapshot\(p_order_id, 'admin_delete'\)/);
+  assert.match(retention, /create or replace function private\.run_order_retention_cleanup/);
+  assert.match(retention, /private\.archive_order_snapshot\(v_candidate\.id, 'retention'\)/);
+  assert.match(retention, /receipt archival failed verification; order deletion was blocked/i);
 });
 
 test("order hard deletion preserves immutable snapshots and clears restrictive dependencies safely", async () => {
@@ -55,8 +64,8 @@ test("account and storefront layouts put shared announcements before their visib
     source("../src/app/(account)/profile/layout.js"),
     source("../src/components/layout/AnnouncementBar.jsx"),
   ]);
-  assert.ok(account.indexOf("<StoreAnnouncement />") < account.indexOf("<Navbar mobileOnly"));
-  assert.ok(store.indexOf("<StoreAnnouncement />") < store.indexOf("<Navbar desktopOnly"));
+  assert.ok(account.indexOf("<StoreAnnouncement />") < account.indexOf("<SessionAwareNavbar mobileOnly"));
+  assert.ok(store.indexOf("<StoreAnnouncement />") < store.indexOf("<SessionAwareNavbar desktopOnly"));
   assert.match(store, /!desktopChromeOnly && <StoreAnnouncement\s*\/>/);
   assert.match(profile, /<StoreLayout desktopChromeOnly>/);
   assert.match(announcement, /if \(!loading && announcements\.length === 0\) return null/);

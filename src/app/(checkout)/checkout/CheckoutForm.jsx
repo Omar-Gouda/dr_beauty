@@ -429,6 +429,18 @@ export default function CheckoutForm({ configurationUnavailable = false, initial
             Reference #{confirmation.orderNumber}. Status: {confirmation.status.replaceAll("_", " ")}. COD total: {confirmation.currency} {confirmation.totalAmount}.
           </p>
           <div className="mb-5 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-4 text-left text-xs text-[var(--color-text-secondary)]">
+            <p className="font-semibold text-[var(--color-text)]">Order details</p>
+            {confirmation.created_at && <p className="mt-2">Placed {new Date(confirmation.created_at).toLocaleString("en-EG", { year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "Africa/Cairo" })} (Cairo time)</p>}
+            {confirmation.items?.length > 0 && <ul className="mt-2 space-y-1">{confirmation.items.map((item, index) => <li key={`${item.name}-${index}`}>{item.name} × {item.quantity} · EGP {Number(item.unitPrice).toFixed(2)} each</li>)}</ul>}
+            {confirmation.subtotal != null && <p className="mt-3">Items subtotal: EGP {Number(confirmation.subtotal).toFixed(2)}</p>}
+            {confirmation.discount_amount != null && Number(confirmation.discount_amount) > 0 && <p>Promotion discount: −EGP {Number(confirmation.discount_amount).toFixed(2)}</p>}
+            {confirmation.shipping_fee_amount != null && <p>Delivery charge: EGP {Number(confirmation.shipping_fee_amount).toFixed(2)}</p>}
+            {confirmation.shipping_discount_amount != null && Number(confirmation.shipping_discount_amount) > 0 && <p>Delivery discount: −EGP {Number(confirmation.shipping_discount_amount).toFixed(2)}</p>}
+            <p className="mt-2 font-semibold text-[var(--color-text)]">Total due on delivery: EGP {confirmation.totalAmount}</p>
+            {confirmation.governorate && <p className="mt-2">Delivery destination: {confirmation.governorate}, {confirmation.city}, {confirmation.address_line}</p>}
+            {confirmation.delivery_notes && <p>Delivery notes: {confirmation.delivery_notes}</p>}
+            <p className="mt-2">Estimated delivery: 5–7 days. Timing varies with order volume, carrier availability, and location.</p>
+            <p className="mt-3 border-t border-[var(--color-border)] pt-3">This is an order summary, not a tax invoice or a substitute for a legally required receipt.</p>
             <p className="font-semibold text-[var(--color-text)]">{confirmation.isGift ? "Gift order" : "Regular order"}</p>
             {confirmation.isGift && <>
               <p className="mt-2">Recipient: {confirmation.giftRecipientName}</p>
@@ -559,7 +571,7 @@ export default function CheckoutForm({ configurationUnavailable = false, initial
                   className="mt-0.5 h-4 w-4 shrink-0 accent-[var(--color-primary)]"
                 />
                 <span>
-                  I agree to receive optional transactional WhatsApp messages about this order, including confirmation and delivery updates. This consent does not cover marketing messages.
+                  Optional: prepare a WhatsApp message about this order for me to review. It may include my name, order number and date, product names, quantities and unit prices, order totals and discounts, COD payment status, delivery destination, notes, and the 5–7 day estimate. The draft opens only after my order is saved; I choose whether to send it through WhatsApp. This is not marketing consent, and no message is sent automatically.
                 </span>
               </label>
 
@@ -651,6 +663,7 @@ export default function CheckoutForm({ configurationUnavailable = false, initial
 
           <div className="min-w-0 lg:col-span-5">
             <CartSummary subtotal={subtotal} promotionQuote={promotionApplied ? promotionQuote : null} showCheckoutButton={false} onShippingAvailabilityChange={setShippingAvailable} giftPackagingSelected={visibleIsGift && visibleGiftPackagingSelected} giftPackagingFee={giftPackagingFee} />
+            <p className="mt-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-xs leading-relaxed text-[var(--color-text-secondary)]"><span className="font-semibold text-[var(--color-text)]">Estimated delivery: 5–7 days.</span> This is an estimate and may vary with order volume, carrier availability, and delivery location. The delivery destination and configured delivery charge are shown above before you place the order.</p>
             <p className="mt-3 flex items-start gap-2 px-2 text-[11px] leading-relaxed text-[var(--color-text-secondary)]">
               <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-primary)]" />
               Cart totals are estimates. Current prices and stock are checked securely when the order is placed.

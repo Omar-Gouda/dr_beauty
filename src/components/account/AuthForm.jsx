@@ -138,6 +138,15 @@ export default function AuthForm({ mode, next = "/profile", defaults = {}, notic
         <PasswordField id="passwordConfirmation" label="Confirm password" autoComplete="new-password" />
       )}
 
+      {mode === "register" && (
+        <div className="flex items-start gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] p-3">
+          <input id="policy-consent" name="policyConsent" type="checkbox" value="accepted" required aria-describedby="policy-consent-help" className="mt-1 h-4 w-4 shrink-0 accent-[var(--color-rose)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]" />
+          <label id="policy-consent-help" htmlFor="policy-consent" className="text-xs leading-5 text-[var(--color-text)]">
+            I have read and agree to the <Link href="/terms-and-conditions" target="_blank" rel="noopener noreferrer" className="font-semibold text-[var(--color-rose)] underline underline-offset-2">Terms &amp; Conditions</Link> and <Link href="/privacy-policy" target="_blank" rel="noopener noreferrer" className="font-semibold text-[var(--color-rose)] underline underline-offset-2">Privacy Policy</Link>.
+          </label>
+        </div>
+      )}
+
       <Button type="submit" disabled={pending} size="md" className={authStyle ? "auth-submit shadow-md shadow-[var(--color-primary)]/20" : "mt-1 w-full shadow-md shadow-[var(--color-primary)]/20"}>
         {pending ? "Please wait…" : submitLabel}
       </Button>

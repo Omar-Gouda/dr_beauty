@@ -7,6 +7,12 @@ import CatalogState from "@/components/catalog/CatalogState";
 import { getCatalogBrands, getCatalogCategories, getCatalogShopProducts } from "@/lib/catalog";
 import { normalizeCatalogPageRequest } from "@/lib/catalog-pagination.mjs";
 
+export const metadata = {
+  title: "Shop Skincare & Beauty",
+  description: "Browse the Dr. Beauty skincare and beauty catalog, with product details and current availability.",
+  alternates: { canonical: "/shop" },
+};
+
 async function ShopCatalogFromUrl({ searchParams }) {
   const params = await searchParams;
   await connection();

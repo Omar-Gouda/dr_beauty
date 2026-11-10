@@ -9,6 +9,7 @@ export const BEAUTY_TIPS_CATEGORIES = [
 export const SUPPORT_CATEGORIES = [
   { value: "order_cancellation", label: "Request an order cancellation" },
   { value: "refund_request", label: "Refund request" },
+  { value: "return_exchange", label: "Return or exchange request" },
   { value: "delayed_order", label: "Delayed order" },
   { value: "missing_item", label: "Missing item" },
   { value: "incorrect_item", label: "Incorrect item" },
@@ -24,6 +25,7 @@ export const CONTACT_METHODS = [
 export const ORDER_SUPPORT_CATEGORIES = new Set([
   "order_cancellation",
   "refund_request",
+  "return_exchange",
   "delayed_order",
   "missing_item",
   "incorrect_item",

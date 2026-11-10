@@ -41,6 +41,7 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
     const formData = new FormData();
     formData.set("fullName", fullName);
     formData.set("phone", phone);
+    formData.set("showPublicRanking", String(draft.showPublicRanking === true));
     submittingRef.current = true;
     setMessage(null);
     startTransition(async () => {
@@ -50,7 +51,7 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
           setMessage({ ok: false, text: result.error });
           return;
         }
-        const updated = { fullName, phone };
+        const updated = { fullName, phone, showPublicRanking: draft.showPublicRanking === true };
         setSaved(updated);
         setDraft(updated);
         setEditing(false);
@@ -72,6 +73,7 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
           <dl className="grid gap-5 sm:grid-cols-2">
             <div><dt className="text-xs font-semibold text-[var(--color-text-secondary)]">Full name</dt><dd className="mt-1 break-words text-sm text-[var(--color-text)]">{saved.fullName || "Not provided"}</dd></div>
             <div><dt className="text-xs font-semibold text-[var(--color-text-secondary)]">Primary phone</dt><dd className="mt-1 break-words text-sm text-[var(--color-text)]">{saved.phone || "Not provided"}</dd></div>
+            <div><dt className="text-xs font-semibold text-[var(--color-text-secondary)]">Customer rankings</dt><dd className="mt-1 text-sm text-[var(--color-text)]">{saved.showPublicRanking === false ? "Name hidden" : "Name may be shown"}</dd></div>
             <div className="sm:col-span-2"><dt className="text-xs font-semibold text-[var(--color-text-secondary)]">Email</dt><dd className="mt-1 break-all text-sm text-[var(--color-text)]">{email}</dd><p className="mt-1 text-xs text-[var(--color-text-secondary)]">Email is managed by your sign-in account and cannot be changed here.</p></div>
           </dl>
           <Button type="button" className="mt-6" onClick={beginEditing}>Edit Profile</Button>
@@ -93,6 +95,16 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
               <input id="profile-email" type="email" value={email} readOnly aria-describedby="profile-email-help" className={`${inputClassName} cursor-not-allowed opacity-75`} />
               <p id="profile-email-help" className="text-xs text-[var(--color-text-secondary)]">Email is managed by Supabase Auth. Use account recovery for password changes.</p>
             </div>
+            <label htmlFor="profile-public-ranking" className="flex items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-4 sm:col-span-2">
+              <input
+                id="profile-public-ranking"
+                type="checkbox"
+                checked={draft.showPublicRanking === true}
+                onChange={(event) => { setMessage(null); setDraft((current) => ({ ...current, showPublicRanking: event.target.checked })); }}
+                className="mt-1 h-4 w-4 accent-[var(--color-primary)]"
+              />
+                <span><span className="block text-sm font-semibold text-[var(--color-text)]">I agree to show my name in customer rankings</span><span className="mt-1 block text-xs leading-relaxed text-[var(--color-text-secondary)]">This optional choice is off until you turn it on. If enabled, only your profile name may appear; order and account details remain private. You can withdraw this choice at any time.</span></span>
+            </label>
           </div>
           <div className="flex flex-wrap gap-3">
             <Button type="submit" disabled={pending}>{pending ? "Saving…" : "Save changes"}</Button>

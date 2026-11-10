@@ -79,16 +79,16 @@ test("discount sharing uses saved active discount data and manual WhatsApp workf
     read("../src/lib/whatsapp/messages.mjs"),
   ]);
   assert.match(actions, /rpc\("save_admin_promotion"/);
-  assert.match(actions, /savedPromotion: savedPromotion\.is_active \? savedPromotion : null/);
+  assert.match(actions, /savedPromotion: id \? null : \{ \.\.\.savedPromotion, discount_tiers: promotionTiers \}/);
   assert.match(manager, /if \(result\.savedPromotion\) setSharePromotion\(result\.savedPromotion\)/);
   assert.match(manager, /navigator\.clipboard\.writeText\(shareMessage\)/);
   assert.match(manager, /Copy discount message/);
-  assert.match(manager, /href=\{WHATSAPP_WEB_URL\}/);
-  assert.match(manager, /WhatsApp opens without a group selected/);
-  assert.match(manager, /choose the Dr\. Beauty Community, then paste and send it yourself/);
+  assert.match(manager, /href=\{channelUrl\}/);
+  assert.match(manager, /Open WhatsApp Channel/);
+  assert.match(manager, /paste and publish it yourself/);
   assert.doesNotMatch(manager, /communityInviteUrl|chat\.whatsapp\.com|NEXT_PUBLIC_WHATSAPP_COMMUNITY_INVITE_URL/);
   assert.doesNotMatch(manager, /What this promotion system supports|This system supports percentage and fixed-amount/);
-  assert.match(message, /Enter this code at checkout/);
+  assert.match(message, /Purpose: Share a Dr\. Beauty promotional offer\.[\s\S]*Code:/);
   const dashboard = await read("../src/app/admin/page.js");
   assert.doesNotMatch(dashboard, /NEXT_PUBLIC_WHATSAPP_COMMUNITY_INVITE_URL|getWhatsAppCommunityInviteUrl/);
 });

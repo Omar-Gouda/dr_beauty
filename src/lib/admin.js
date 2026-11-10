@@ -7,6 +7,15 @@ import {
   getAdminOrderPageCount,
   normalizeAdminOrderFilters,
 } from "@/lib/admin-order-query.mjs";
+import {
+  buildAdminSalesSeries,
+  getAdminDashboardRange,
+  rankAdminProducts,
+  summarizeAdminOrders,
+  normalizeCairoRevenueMetrics,
+} from "@/lib/admin-dashboard.mjs";
+import { normalizeUserAnalytics } from "@/lib/admin-user-analytics.mjs";
+import { getWhatsAppChannelUrl } from "@/lib/whatsapp/channel.mjs";
 
 const adminProductSelection = "id,name,slug,description,ingredients,price,compare_at_price,currency,is_active,is_bestseller,category_id,brand_id,category:categories(id,name,slug),brand:brands(id,name),images:product_images(id,image_url,alt_text,sort_order,focal_x,focal_y),inventory:product_inventory(stock_quantity)";
 
@@ -149,16 +158,18 @@ export async function getAdminPromotions() {
     { data: redemptionCounts, error: countsError },
     { data: productTargets, error: productTargetsError },
     { data: categoryTargets, error: categoryTargetsError },
+    { data: discountTiers, error: tiersError },
     { data: productOptions, error: productOptionsError },
     { data: categoryOptions, error: categoryOptionsError },
   ] = await Promise.all([
     access.supabase
       .from("promotions")
-      .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,first_purchase_only,application_scope,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
+      .select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,first_purchase_only,application_scope,tiered_discount_enabled,is_active,is_featured,display_priority,target_path,is_announcement,announcement_priority,created_at,updated_at")
       .order("created_at", { ascending: false }),
     access.supabase.rpc("get_admin_promotion_redemption_counts"),
     access.supabase.from("promotion_product_targets").select("promotion_id,product_id"),
     access.supabase.from("promotion_category_targets").select("promotion_id,category_id"),
+    access.supabase.from("promotion_discount_tiers").select("promotion_id,id,minimum_subtotal,discount_type,discount_value,maximum_discount").order("minimum_subtotal", { ascending: true }),
     access.supabase.from("products").select("id,name,slug,is_active").order("name", { ascending: true }),
     access.supabase.from("categories").select("id,name,slug,is_active").order("sort_order", { ascending: true }).order("name", { ascending: true }),
   ]);
@@ -166,8 +177,9 @@ export async function getAdminPromotions() {
   if (countsError || !Array.isArray(redemptionCounts)) {
     return { data: null, error: "Promotion redemption analytics could not be loaded. Check the admin database migration and access." };
   }
-  if (productTargetsError || categoryTargetsError || productOptionsError || categoryOptionsError ||
+  if (productTargetsError || categoryTargetsError || tiersError || productOptionsError || categoryOptionsError ||
       !Array.isArray(productTargets) || !Array.isArray(categoryTargets) ||
+      !Array.isArray(discountTiers) ||
       !Array.isArray(productOptions) || !Array.isArray(categoryOptions)) {
     return { data: null, error: "Promotion target data could not be loaded. Check the Phase 2A migration and admin access." };
   }
@@ -184,11 +196,18 @@ export async function getAdminPromotions() {
     current.push(target.category_id);
     categoryTargetsByPromotion.set(target.promotion_id, current);
   }
+  const tiersByPromotion = new Map();
+  for (const tier of discountTiers) {
+    const current = tiersByPromotion.get(tier.promotion_id) ?? [];
+    current.push(tier);
+    tiersByPromotion.set(tier.promotion_id, current);
+  }
   return {
     data: (data ?? []).map((promotion) => ({
       ...promotion,
       product_target_ids: productTargetsByPromotion.get(promotion.id) ?? [],
       category_target_ids: categoryTargetsByPromotion.get(promotion.id) ?? [],
+      discount_tiers: tiersByPromotion.get(promotion.id) ?? [],
       redemption_counts: countsByPromotion.get(promotion.id) ?? {
         total_records: 0,
         capacity_count: 0,
@@ -231,40 +250,212 @@ export async function getAdminProductReviews() {
   return { data: data ?? [], error: null };
 }
 
-export async function getAdminDashboardData() {
+async function fetchAdminRowsInRange(makeQuery, start, end, maximumRows = 10000) {
+  const pageSize = 1000;
+  const first = await makeQuery()
+    .gte("created_at", start)
+    .lt("created_at", end)
+    .range(0, pageSize - 1);
+  if (first.error) return { data: null, error: true, oversized: false };
+  const count = first.count ?? first.data?.length ?? 0;
+  if (count > maximumRows) return { data: null, error: false, oversized: true };
+  const pages = Math.ceil(count / pageSize);
+  if (pages <= 1) return { data: first.data ?? [], error: false, oversized: false };
+  const remaining = await Promise.all(Array.from({ length: pages - 1 }, (_, index) => makeQuery()
+    .gte("created_at", start)
+    .lt("created_at", end)
+    .range((index + 1) * pageSize, (index + 2) * pageSize - 1)));
+  if (remaining.some((page) => page.error)) return { data: null, error: true, oversized: false };
+  return { data: [...(first.data ?? []), ...remaining.flatMap((page) => page.data ?? [])], error: false, oversized: false };
+}
+
+async function fetchAdminOrderItemsInRange(db, start, end) {
+  const makeQuery = () => db.from("order_items")
+    .select("id,order_id,product_id,product_name_snapshot,product_slug_snapshot,unit_price,quantity,line_total,promotion_discount_amount,order_row:orders!inner(created_at,order_status,payment_status,discount_amount)", { count: "exact" })
+    .eq("order_row.order_status", "delivered")
+    .neq("order_row.payment_status", "refunded")
+    .order("id", { ascending: true });
+  const pageSize = 1000;
+  const first = await makeQuery().gte("order_row.created_at", start).lt("order_row.created_at", end).range(0, pageSize - 1);
+  if (first.error) return { data: null, error: true, oversized: false };
+  const count = first.count ?? first.data?.length ?? 0;
+  if (count > 10000) return { data: null, error: false, oversized: true };
+  const pages = Math.ceil(count / pageSize);
+  if (pages <= 1) return { data: first.data ?? [], error: false, oversized: false };
+  const remaining = await Promise.all(Array.from({ length: pages - 1 }, (_, index) => makeQuery()
+    .gte("order_row.created_at", start)
+    .lt("order_row.created_at", end)
+    .range((index + 1) * pageSize, (index + 2) * pageSize - 1)));
+  if (remaining.some((page) => page.error)) return { data: null, error: true, oversized: false };
+  return { data: [...(first.data ?? []), ...remaining.flatMap((page) => page.data ?? [])], error: false, oversized: false };
+}
+
+export async function getAdminDashboardData(input = {}) {
   const access = await getAdminRequestAccess();
   if (access.status !== "authorized") return { unavailable: true };
   const db = access.supabase;
-  const queries = await Promise.all([
-    db.from("products").select("id", { count: "exact", head: true }),
-    db.from("products").select("id", { count: "exact", head: true }).eq("is_active", true),
-    db.from("products").select("id", { count: "exact", head: true }).eq("is_active", false),
-    db.from("categories").select("id", { count: "exact", head: true }),
-    db.from("product_inventory").select("stock_quantity"),
-    db.from("orders").select("id", { count: "exact", head: true }),
+  const range = getAdminDashboardRange(input);
+  const from = new Date(range.previousStart) < new Date(range.start) ? range.previousStart : range.start;
+  const windowEnd = range.end;
+  const [ordersResult, totalOrders, pendingNow, outOfStockCount, outOfStockProducts, productsCount, activeCatalogResult, categoriesCount, recentOrdersResult, pendingOrdersResult, adminNotifications, recentReviews, recentRequests, itemsResult, userAnalyticsResult, announcementsResult, cairoRevenueResult, promotionsResult, redemptionCountsResult, rankingVisibilityResult, receiptArchiveResult] = await Promise.all([
+    fetchAdminRowsInRange(() => db.from("orders").select("id,order_number,created_at,order_status,payment_status,total_amount", { count: "exact" }).order("created_at", { ascending: true }).order("id", { ascending: true }), from, windowEnd),
+    db.from("orders").select("id", { count: "exact", head: true }).neq("order_status", "cancelled"),
     db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "pending_confirmation"),
-    db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "confirmed"),
-    db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "processing"),
-    db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "shipped"),
-    db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "delivered"),
-    db.from("orders").select("id", { count: "exact", head: true }).eq("order_status", "cancelled"),
-    db.from("orders").select("id,order_number,customer_name,customer_phone,total_amount,order_status,created_at").order("created_at", { ascending: false }).limit(5),
+    db.from("product_inventory").select("product_id", { count: "exact", head: true }).eq("stock_quantity", 0),
+    db.from("product_inventory").select("product:products(id,name,slug,images:product_images(image_url,sort_order))").eq("stock_quantity", 0).order("updated_at", { ascending: false }).limit(6),
+    db.from("products").select("id", { count: "exact", head: true }),
+    db.from("products").select("id,name,slug", { count: "exact" }).eq("is_active", true).order("name", { ascending: true }).limit(1000),
+    db.from("categories").select("id", { count: "exact", head: true }),
+    db.from("orders").select("id,order_number,total_amount,order_status,payment_status,created_at").order("created_at", { ascending: false }).limit(6),
+    db.from("orders").select("id,order_number,total_amount,created_at").eq("order_status", "pending_confirmation").order("created_at", { ascending: true }).limit(5),
+    getAdminNotifications(db, access.user.id),
+    db.from("product_reviews").select("id,rating,created_at,product:products(name)").in("status", ["pending", "approved"]).order("created_at", { ascending: false }).limit(4),
+    db.from("customer_service_requests").select("id,request_type,category,created_at").order("created_at", { ascending: false }).limit(4),
+    fetchAdminOrderItemsInRange(db, range.start, range.end),
+    db.rpc("get_admin_user_dashboard_metrics"),
+    db.rpc("get_public_discount_announcements"),
+    db.rpc("get_admin_cairo_revenue_metrics"),
+    db.from("promotions").select("id,code,title,description,discount_type,discount_value,maximum_discount,minimum_subtotal,starts_at,ends_at,maximum_redemptions,per_account_redemption_limit,first_purchase_only,application_scope,tiered_discount_enabled,is_active").order("created_at", { ascending: false }),
+    db.rpc("get_admin_promotion_redemption_counts"),
+    db.from("storefront_ranking_settings").select("show_loved_by_dr_beauty,show_dr_beauty_elites").maybeSingle(),
+    db.rpc("admin_receipt_archive_overview"),
   ]);
-  const [products, active, inactive, categories, inventory, orders, pending, confirmed, processing, shipped, delivered, cancelled, recent] = queries;
-  const value = (query) => query.error ? null : query.count ?? null;
+
+  if (ordersResult.error) {
+    return { unavailable: false, range, error: "Order analytics could not be loaded. Verify admin database access and retry." };
+  }
+  const orderRows = ordersResult.data ?? [];
+  const currentRows = orderRows.filter((order) => Date.parse(order.created_at) >= Date.parse(range.start) && Date.parse(order.created_at) < Date.parse(range.end));
+  const previousRows = orderRows.filter((order) => Date.parse(order.created_at) >= Date.parse(range.previousStart) && Date.parse(order.created_at) < Date.parse(range.previousEnd));
+  const current = summarizeAdminOrders(currentRows);
+  const previous = summarizeAdminOrders(previousRows);
+  const orderAnalyticsAvailable = !ordersResult.oversized;
+  const series = buildAdminSalesSeries(currentRows, range);
+  const previousSeries = buildAdminSalesSeries(previousRows, { ...range, start: range.previousStart, end: range.previousEnd });
+  const items = itemsResult.data ?? [];
+  const validItems = itemsResult.data !== null && !itemsResult.error && !itemsResult.oversized;
+  const topByQuantity = validItems ? rankAdminProducts(items, 5, "quantity") : null;
+  const productRevenueAvailable = validItems && !items.some((item) => Number(item.order_row?.discount_amount) > 0 && item.promotion_discount_amount == null);
+  const topByRevenue = productRevenueAvailable ? rankAdminProducts(items, 5, "revenue") : null;
+  const topProductIds = [...new Set([...(topByQuantity ?? []), ...(topByRevenue ?? [])].map((item) => item.productId).filter(Boolean))];
+  let imagesByProduct = new Map();
+  if (topProductIds.length) {
+    const { data: productImages, error: productImagesError } = await db.from("products")
+      .select("id,images:product_images(image_url,sort_order)")
+      .in("id", topProductIds);
+    if (!productImagesError) {
+      imagesByProduct = new Map((productImages ?? []).map((product) => [
+        product.id,
+        (product.images ?? []).toSorted((a, b) => a.sort_order - b.sort_order)[0]?.image_url ?? null,
+      ]));
+    }
+  }
+  const soldProductIds = new Set((itemsResult.data ?? []).map((item) => item.product_id).filter(Boolean));
+  const noSalesProducts = validItems && !activeCatalogResult.error && (activeCatalogResult.count ?? 0) <= 1000
+    ? (activeCatalogResult.data ?? []).filter((product) => !soldProductIds.has(product.id)).slice(0, 5)
+    : null;
+  const statusCounts = current.statuses;
+  const terminalCount = statusCounts.delivered + statusCounts.cancelled;
+  const completionRate = terminalCount ? statusCounts.delivered / terminalCount * 100 : null;
+  const recentActivity = [];
+  for (const notification of adminNotifications.data ?? []) {
+    recentActivity.push({
+      id: `notification-${notification.id}`,
+      notificationId: notification.id,
+      type: notification.event_type,
+      createdAt: notification.created_at,
+      readAt: notification.read_at,
+      orderNumber: notification.orderNumber,
+      requestId: notification.requestId,
+      requestType: notification.requestType,
+    });
+  }
+  const notifiedRequestIds = new Set((adminNotifications.data ?? []).map((notification) => notification.requestId).filter(Boolean));
+  for (const review of recentReviews.data ?? []) {
+    recentActivity.push({ id: `review-${review.id}`, type: "new_review", createdAt: review.created_at, title: review.product?.name ?? "Product review", detail: `${review.rating} / 5 rating`, href: "/admin/reviews" });
+  }
+  for (const request of recentRequests.data ?? []) {
+    if (notifiedRequestIds.has(request.id)) continue;
+    recentActivity.push({ id: `request-${request.id}`, type: request.request_type, createdAt: request.created_at, detail: request.category, requestId: request.id, href: `/admin/requests#request-${request.id}` });
+  }
+  recentActivity.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+
+  const visitorTrackingReady = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY && (process.env.VISITOR_TRACKING_SECRET ?? "").length >= 32);
+  const userAnalytics = userAnalyticsResult.error
+    ? null
+    : normalizeUserAnalytics(userAnalyticsResult.data, { visitorTrackingReady });
+  const promotionCountsById = new Map((Array.isArray(redemptionCountsResult.data) ? redemptionCountsResult.data : []).map((row) => [row.promotion_id, row]));
+  const availablePromotions = promotionsResult.error || !Array.isArray(promotionsResult.data) || redemptionCountsResult.error || !Array.isArray(redemptionCountsResult.data)
+    ? null
+    : promotionsResult.data.map((promotion) => ({
+      ...promotion,
+      redemption_counts: promotionCountsById.get(promotion.id) ?? {
+        total_records: 0, capacity_count: 0, reserved_count: 0, redeemed_count: 0,
+        cancelled_count: 0, refunded_count: 0, released_count: 0,
+      },
+    }));
+
   return {
     unavailable: false,
+    asOf: new Date().toISOString(),
+    range,
+    rangeError: range.error,
+    historyWarning: range.historyMayBeIncomplete,
+    analyticsError: Boolean(ordersResult.oversized),
+    itemAnalyticsError: Boolean(itemsResult.error || itemsResult.oversized),
     metrics: {
-      products: value(products), active: value(active), inactive: value(inactive),
-      categories: value(categories),
-      stock: inventory.error ? null : inventory.data.reduce((sum, row) => sum + row.stock_quantity, 0),
-      orders: value(orders),
-      statuses: {
-        pending: value(pending), confirmed: value(confirmed), processing: value(processing),
-        shipped: value(shipped), delivered: value(delivered), cancelled: value(cancelled),
-      },
+      cairoRevenue: cairoRevenueResult.error ? null : normalizeCairoRevenueMetrics(cairoRevenueResult.data),
+      cairoRevenueError: Boolean(cairoRevenueResult.error || !normalizeCairoRevenueMetrics(cairoRevenueResult.data)),
+      totalRevenue: orderAnalyticsAvailable ? current.revenue : null,
+      previousRevenue: orderAnalyticsAvailable ? previous.revenue : null,
+      collectedRevenue: orderAnalyticsAvailable ? current.collectedRevenue : null,
+      previousCollectedRevenue: orderAnalyticsAvailable ? previous.collectedRevenue : null,
+      averageOrderValue: orderAnalyticsAvailable ? current.averageOrderValue : null,
+      previousAverageOrderValue: orderAnalyticsAvailable ? previous.averageOrderValue : null,
+      orders: totalOrders.error ? null : totalOrders.count,
+      periodOrders: orderAnalyticsAvailable ? current.orderCount : null,
+      previousPeriodOrders: orderAnalyticsAvailable ? previous.orderCount : null,
+      pendingOrders: pendingNow.error ? null : pendingNow.count,
+      newCustomers: userAnalytics?.newUsers ?? null,
+      previousNewCustomers: null,
+      customerAccounts: userAnalytics?.totalUsers ?? null,
+      customerAnalyticsAvailable: Boolean(userAnalytics),
+      statusCounts: orderAnalyticsAvailable ? statusCounts : null,
+      completionRate: orderAnalyticsAvailable ? completionRate : null,
+      cancelledOrders: orderAnalyticsAvailable ? statusCounts.cancelled : null,
+      products: productsCount.error ? null : productsCount.count,
+      categories: categoriesCount.error ? null : categoriesCount.count,
+      stockUnits: null,
+      outOfStock: outOfStockCount.error ? null : outOfStockCount.count,
+      lowStock: null,
     },
-    recentOrders: recent.error ? null : recent.data ?? [],
+    recentOrders: recentOrdersResult.error ? null : recentOrdersResult.data ?? [],
+    pendingOrders: pendingOrdersResult.error ? null : pendingOrdersResult.data ?? [],
+    outOfStockProducts: outOfStockProducts.error ? null : (outOfStockProducts.data ?? []).map((row) => row.product).filter(Boolean),
+    topProductsByQuantity: topByQuantity?.map((item) => ({ ...item, image: imagesByProduct.get(item.productId) ?? null })) ?? null,
+    topProductsByRevenue: topByRevenue?.map((item) => ({ ...item, image: imagesByProduct.get(item.productId) ?? null })) ?? null,
+    productRevenueAvailable,
+    noSalesProducts,
+    series: ordersResult.oversized ? null : series,
+    previousSeries: ordersResult.oversized ? null : previousSeries,
+    currentPeriod: orderAnalyticsAvailable ? current : null,
+    previousPeriod: orderAnalyticsAvailable ? previous : null,
+    recentActivity: recentActivity.slice(0, 10),
+    activityPartial: Boolean(adminNotifications.error || recentReviews.error || recentRequests.error),
+    inventoryAggregateAvailable: false,
+    userAnalytics,
+    userAnalyticsError: userAnalyticsResult.error ? "User analytics could not be loaded. Check that the local dashboard analytics migration is applied and admin access is valid." : null,
+    rankingVisibilitySettings: rankingVisibilityResult.error || !rankingVisibilityResult.data ? null : {
+      showLovedByDrBeauty: rankingVisibilityResult.data.show_loved_by_dr_beauty === true,
+      showDrBeautyElites: rankingVisibilityResult.data.show_dr_beauty_elites === true,
+    },
+    announcements: announcementsResult.error || !Array.isArray(announcementsResult.data) ? null : announcementsResult.data,
+    announcementsError: Boolean(announcementsResult.error || !Array.isArray(announcementsResult.data)),
+    availablePromotions,
+    availablePromotionsError: availablePromotions === null,
+    receiptArchive: receiptArchiveResult.error || !receiptArchiveResult.data ? null : receiptArchiveResult.data,
+    receiptArchiveError: Boolean(receiptArchiveResult.error || !receiptArchiveResult.data),
+    whatsappChannelUrl: getWhatsAppChannelUrl(),
   };
 }
 
@@ -280,7 +471,7 @@ export async function getAdminOrders(input = {}) {
   };
   const fetchPage = (page) => applyFilters(access.supabase
     .from("orders")
-    .select("id,order_number,customer_name,customer_email,customer_phone,governorate,city,address_line,delivery_notes,payment_method,payment_status,order_status,subtotal,shipping_amount,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,currency,created_at,shipping_carrier,tracking_number,tracking_url,shipped_at,status_changed_at,items:order_items(id,product_name_snapshot,product_slug_snapshot,unit_price,quantity,line_total)", { count: "exact" }))
+    .select("id,order_number,customer_name,customer_email,customer_phone,governorate,city,address_line,delivery_notes,payment_method,payment_status,order_status,subtotal,shipping_amount,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,currency,promotion_code_snapshot,created_at,shipping_carrier,tracking_number,tracking_url,shipped_at,status_changed_at,items:order_items(id,product_name_snapshot,product_slug_snapshot,unit_price,quantity,line_total,promotion_discount_amount)", { count: "exact" }))
     .order("created_at", { ascending: false })
     .order("id", { ascending: false })
     .range((page - 1) * filters.pageSize, page * filters.pageSize - 1);

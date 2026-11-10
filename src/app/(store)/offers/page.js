@@ -5,7 +5,11 @@ import Container from "@/components/ui/Container";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { getCustomerOffers } from "@/lib/catalog";
 
-export const metadata = { title: "Offers & Discount Codes | Dr. Beauty" };
+export const metadata = {
+  title: "Offers & Discount Codes",
+  description: "Explore current Dr. Beauty savings, featured discount codes, and available delivery offers.",
+  alternates: { canonical: "/offers" },
+};
 
 function discountLabel(offer) {
   return offer.discount_type === "percentage"

@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import ProfileEditor from "@/components/account/ProfileEditor";
 import { logout } from "@/app/(account)/actions";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
 const notices = {
   welcome: "Your account is ready.",
@@ -36,11 +37,12 @@ async function ProfileContent({ searchParams }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect("/login?next=%2Fprofile");
+  await redirectForPolicyAcceptance(supabase, "/profile");
 
   const [{ data: profile, error: profileError }, { data: addresses, error: addressesError }, { data: recentOrders, error: ordersError }, { data: isAdmin }] = await Promise.all([
     supabase
     .from("profiles")
-    .select("full_name,phone")
+    .select("full_name,phone,show_public_ranking")
     .eq("id", user.id)
     .maybeSingle(),
     supabase
@@ -100,7 +102,7 @@ async function ProfileContent({ searchParams }) {
               <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">We could not load your profile. Please try again later.</p>
             ) : (
               <ProfileEditor
-                defaults={{ fullName: profile.full_name ?? "", phone: profile.phone ?? "" }}
+                defaults={{ fullName: profile.full_name ?? "", phone: profile.phone ?? "", showPublicRanking: profile.show_public_ranking === true }}
                 email={user.email ?? "Email unavailable"}
                 notice={notices[params?.notice] ?? ""}
               />

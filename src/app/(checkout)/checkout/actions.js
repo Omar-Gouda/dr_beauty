@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import { normalizeWhatsAppPhoneNumber } from "@/lib/whatsapp/messages.mjs";
 import { calculateShippingBreakdownCents, parseMoneyCents } from "@/lib/promotions.mjs";
-import { calculateEligiblePromotionAmounts, calculateEligiblePromotionDiscountCents } from "@/lib/promotion-targeting.mjs";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ITEMS = 50;
@@ -59,17 +59,14 @@ export async function previewPromotionCode(codeInput, inputItems) {
     const { data: { user } = {}, error: authError } = await supabase.auth.getUser();
     if (authError || !user) return { ok: false, message: "Sign in again to check this discount code." };
 
-    const productIds = items.map((item) => item.product_id);
-    const [{ data: products, error: productError }, { data: promotions, error: promotionError }, { data: settings, error: settingsError }] = await Promise.all([
-      supabase.from("products").select("id,price,category_id").eq("is_active", true).in("id", productIds),
+    const [{ data: promotions, error: promotionError }, { data: settings, error: settingsError }] = await Promise.all([
       supabase.from("promotions")
         .select("id,code,discount_type,discount_value,maximum_discount,minimum_subtotal,maximum_redemptions,is_active,starts_at,ends_at,first_purchase_only,application_scope")
         .ilike("code", code.replace(/[\\%_]/g, "\\$&"))
         .limit(2),
       supabase.from("shipping_settings").select("is_shipping_enabled,default_fee,free_shipping_minimum_subtotal").eq("id", true).maybeSingle(),
     ]);
-    if (productError || promotionError || !Array.isArray(products) || products.length !== productIds.length ||
-        settingsError || !settings?.is_shipping_enabled || !Array.isArray(promotions) || promotions.length !== 1) {
+    if (promotionError || settingsError || !settings?.is_shipping_enabled || !Array.isArray(promotions) || promotions.length !== 1) {
       return { ok: false, message: "This code is not available for the current bag." };
     }
 
@@ -102,17 +99,18 @@ export async function previewPromotionCode(codeInput, inputItems) {
     if (eligibility.first_purchase_only && !eligibility.first_purchase_eligible) {
       return { ok: false, message: "This offer is available for your first purchase only." };
     }
-    const amounts = calculateEligiblePromotionAmounts({
-      items,
-      products,
-      scope: eligibility.application_scope,
-      productTargetIds: eligibility.product_target_ids,
-      categoryTargetIds: eligibility.category_target_ids,
+    const { data: quoteRows, error: quoteError } = await supabase.rpc("get_promotion_tier_quote", {
+      p_promotion_id: promotion.id,
+      p_items: items,
     });
-    if (!amounts) return { ok: false, message: "Current product prices could not be verified." };
-    const discountCents = calculateEligiblePromotionDiscountCents(amounts, promotion);
-    if (discountCents === null) return { ok: false, message: "This code is not eligible for the current bag or eligible subtotal." };
-    const shipping = calculateShippingBreakdownCents(amounts.subtotalCents, settings);
+    const quote = Array.isArray(quoteRows) ? quoteRows[0] : null;
+    const subtotalCents = parseMoneyCents(String(quote?.subtotal ?? ""));
+    const eligibleSubtotalCents = parseMoneyCents(String(quote?.eligible_subtotal ?? ""), { allowZero: true });
+    const discountCents = parseMoneyCents(String(quote?.discount_amount ?? ""), { allowZero: true });
+    if (quoteError || !quote?.is_eligible || subtotalCents === null || eligibleSubtotalCents === null || discountCents === null) {
+      return { ok: false, message: "This code is not eligible for the current bag or eligible subtotal." };
+    }
+    const shipping = calculateShippingBreakdownCents(subtotalCents, settings);
     if (!shipping) {
       return { ok: false, message: "Shipping is temporarily unavailable. Please try again later." };
     }
@@ -120,8 +118,8 @@ export async function previewPromotionCode(codeInput, inputItems) {
       ok: true,
       quote: {
         code: promotion.code,
-        subtotal: moneyFromCents(amounts.subtotalCents),
-        eligibleSubtotal: moneyFromCents(amounts.eligibleSubtotalCents),
+        subtotal: moneyFromCents(subtotalCents),
+        eligibleSubtotal: moneyFromCents(eligibleSubtotalCents),
         shippingFee: moneyFromCents(shipping.shippingFeeCents),
         shippingDiscountAmount: moneyFromCents(shipping.shippingDiscountCents),
         shippingAmount: moneyFromCents(shipping.shippingAmountCents),
@@ -255,6 +253,7 @@ export async function createCodOrderAttempt(input) {
         message: "Please log in again to continue checkout.",
       };
     }
+    await redirectForPolicyAcceptance(supabase, "/checkout");
     authenticatedUserId = user.id;
 
     if (addressId) {
@@ -356,11 +355,10 @@ export async function createCodOrderAttempt(input) {
   }
 
   let confirmationDetails = null;
-  if (whatsappConsent) {
-    try {
+  try {
       const { data: savedOrder, error: savedOrderError } = await supabase
         .from("orders")
-        .select("id,customer_name,is_gift,gift_recipient_name,gift_recipient_phone,gift_message,gift_packaging_selected,gift_packaging_fee_amount")
+        .select("id,customer_name,is_gift,gift_recipient_name,gift_message,gift_packaging_selected,gift_packaging_fee_amount,created_at,order_status,payment_method,payment_status,currency,subtotal,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,governorate,city,address_line,delivery_notes")
         .eq("user_id", authenticatedUserId)
         .eq("order_number", String(orderNumber))
         .maybeSingle();
@@ -368,29 +366,41 @@ export async function createCodOrderAttempt(input) {
       if (!savedOrderError && savedOrder) {
         const { data: savedItems, error: savedItemsError } = await supabase
           .from("order_items")
-          .select("product_name_snapshot,quantity")
+          .select("product_name_snapshot,quantity,unit_price")
           .eq("order_id", savedOrder.id)
           .order("created_at", { ascending: true });
         const validSavedItems = Array.isArray(savedItems) && savedItems.length > 0 && savedItems.length <= 50 &&
           savedItems.every((item) => typeof item.product_name_snapshot === "string" &&
-            item.product_name_snapshot.trim().length > 0 && Number.isInteger(item.quantity) && item.quantity > 0 && item.quantity <= 999);
+            item.product_name_snapshot.trim().length > 0 && Number.isInteger(item.quantity) && item.quantity > 0 && item.quantity <= 999 && Number.isFinite(Number(item.unit_price)) && Number(item.unit_price) >= 0);
 
         if (!savedItemsError && validSavedItems && typeof savedOrder.customer_name === "string" && savedOrder.customer_name.trim()) {
           confirmationDetails = {
             customerName: savedOrder.customer_name,
             isGift: savedOrder.is_gift,
+            created_at: savedOrder.created_at,
+            order_status: savedOrder.order_status,
+            payment_method: savedOrder.payment_method,
+            payment_status: savedOrder.payment_status,
+            currency: savedOrder.currency,
+            subtotal: savedOrder.subtotal,
+            shipping_fee_amount: savedOrder.shipping_fee_amount,
+            shipping_discount_amount: savedOrder.shipping_discount_amount,
+            discount_amount: savedOrder.discount_amount,
+            total_amount: savedOrder.total_amount,
+            governorate: savedOrder.governorate,
+            city: savedOrder.city,
+            address_line: savedOrder.address_line,
+            delivery_notes: savedOrder.delivery_notes,
             giftRecipientName: savedOrder.gift_recipient_name,
-            giftRecipientPhone: savedOrder.gift_recipient_phone,
             giftMessage: savedOrder.gift_message,
             giftPackagingSelected: savedOrder.gift_packaging_selected,
             giftPackagingFeeAmount: String(savedOrder.gift_packaging_fee_amount),
-            items: savedItems.map((item) => ({ name: item.product_name_snapshot, quantity: item.quantity })),
+            items: savedItems.map((item) => ({ name: item.product_name_snapshot, quantity: item.quantity, unitPrice: String(item.unit_price) })),
           };
         }
       }
-    } catch {
-      // Order creation already succeeded. A confirmation-detail read failure must not report the order as failed.
-    }
+  } catch {
+    // Order creation already succeeded. A confirmation-detail read failure must not report the order as failed.
   }
 
   return {
@@ -402,6 +412,22 @@ export async function createCodOrderAttempt(input) {
       currency: "EGP",
       customerName: confirmationDetails?.customerName ?? null,
       items: confirmationDetails?.items ?? null,
+      order_status: confirmationDetails?.order_status ?? result.order_status,
+      ...(confirmationDetails ? {
+        created_at: confirmationDetails.created_at,
+        order_status: confirmationDetails.order_status,
+        payment_method: confirmationDetails.payment_method,
+        payment_status: confirmationDetails.payment_status,
+        subtotal: confirmationDetails.subtotal,
+        shipping_fee_amount: confirmationDetails.shipping_fee_amount,
+        shipping_discount_amount: confirmationDetails.shipping_discount_amount,
+        discount_amount: confirmationDetails.discount_amount,
+        total_amount: confirmationDetails.total_amount,
+        governorate: confirmationDetails.governorate,
+        city: confirmationDetails.city,
+        address_line: confirmationDetails.address_line,
+        delivery_notes: confirmationDetails.delivery_notes,
+      } : {}),
       isGift,
       giftRecipientName: confirmationDetails?.giftRecipientName ?? giftRecipientName,
       giftRecipientPhone: confirmationDetails?.giftRecipientPhone ?? giftRecipientPhone,

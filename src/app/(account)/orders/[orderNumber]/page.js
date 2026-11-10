@@ -4,7 +4,10 @@ import { redirect } from "next/navigation";
 import { connection } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 import WhatsAppAction from "@/components/whatsapp/WhatsAppAction";
+import { getOrderItemFinancials } from "@/lib/order-item-financials.mjs";
+import { buildWhatsAppOrderContext } from "@/lib/whatsapp/messages.mjs";
 
 const STATUS_LABELS = {
   pending_confirmation: "Pending confirmation",
@@ -83,6 +86,7 @@ async function OrderDetailsContent({ params }) {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect(`/login?next=${encodeURIComponent(`/orders/${orderNumber}`)}`);
+  await redirectForPolicyAcceptance(supabase, `/orders/${orderNumber}`);
 
   if (!/^[1-9]\d{0,18}$/.test(orderNumber) || BigInt(orderNumber) > 9223372036854775807n) {
     return <PageMessage title="Order not found">We could not find that order in your account.</PageMessage>;
@@ -90,7 +94,7 @@ async function OrderDetailsContent({ params }) {
 
   const { data: order, error } = await supabase
     .from("orders")
-    .select("order_number,created_at,order_status,payment_method,payment_status,currency,subtotal,shipping_amount,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,customer_name,customer_email,customer_phone,governorate,city,address_line,delivery_notes,shipping_carrier,tracking_number,tracking_url,shipped_at,items:order_items(product_name_snapshot,product_slug_snapshot,unit_price,quantity,line_total)")
+    .select("order_number,created_at,order_status,payment_method,payment_status,currency,subtotal,shipping_amount,shipping_fee_amount,shipping_discount_amount,discount_amount,total_amount,promotion_code_snapshot,customer_name,customer_email,customer_phone,governorate,city,address_line,delivery_notes,shipping_carrier,tracking_number,tracking_url,shipped_at,items:order_items(product_name_snapshot,product_slug_snapshot,unit_price,quantity,line_total,promotion_discount_amount)")
     .eq("user_id", user.id)
     .eq("order_number", orderNumber)
     .maybeSingle();
@@ -106,9 +110,10 @@ async function OrderDetailsContent({ params }) {
         <Link href="/orders" className="inline-flex min-h-10 items-center text-sm font-semibold text-[var(--color-primary)] hover:underline">Back to orders</Link>
         <header className="mb-7 mt-4 flex flex-col justify-between gap-4 border-b border-[var(--color-border)] pb-6 sm:flex-row sm:items-end">
           <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">Order receipt</p>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-primary)]">Order summary</p>
             <h1 className="font-editorial text-3xl font-medium sm:text-4xl">Order #{order.order_number}</h1>
             <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Placed {formatDate(order.created_at)}</p>
+            {order.promotion_code_snapshot && <p className="mt-2 text-sm text-[var(--color-primary)]">Promotion code: {order.promotion_code_snapshot}</p>}
           </div>
           <span className="inline-flex w-fit items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2 text-xs font-semibold capitalize">
             {STATUS_LABELS[order.order_status] ?? "Status unavailable"}
@@ -116,6 +121,7 @@ async function OrderDetailsContent({ params }) {
         </header>
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1.5fr)_minmax(280px,1fr)]">
+          <p className="lg:col-span-2 -mb-1 rounded-xl bg-[var(--color-primary-light)] px-4 py-3 text-xs leading-relaxed text-[var(--color-text)]">This account page is an order summary. It is not a tax invoice or a substitute for any legally required receipt. Order and item details are available here while the operational order record is retained.</p>
           <div className="space-y-5">
             <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm sm:p-7" aria-labelledby="items-heading">
               <div className="mb-5 flex items-baseline justify-between gap-3">
@@ -132,7 +138,16 @@ async function OrderDetailsContent({ params }) {
                         <h3 className="font-semibold">{item.product_name_snapshot}</h3>
                         <p className="text-xs text-[var(--color-text-secondary)]">Qty {item.quantity} · {formatAmount(item.unit_price, order.currency)} each</p>
                       </div>
-                      <p className="text-sm font-semibold">{formatAmount(item.line_total, order.currency)}</p>
+                      <div className="text-sm sm:text-right">
+                        <p className="font-semibold">Original item subtotal: {formatAmount(item.line_total, order.currency)}</p>
+                        {(() => {
+                          const amounts = getOrderItemFinancials(item);
+                          return amounts?.allocationAvailable ? <dl className="mt-1 space-y-1 text-xs">
+                            <div className="flex justify-between gap-3 sm:justify-end"><dt className="text-[var(--color-text-secondary)]">Promotion discount</dt><dd className="text-[var(--color-success)]">−{formatAmount(amounts.promotionDiscountCents / 100, order.currency)}</dd></div>
+                            <div className="flex justify-between gap-3 font-semibold sm:justify-end"><dt>Final item total</dt><dd>{formatAmount(amounts.finalItemTotalCents / 100, order.currency)}</dd></div>
+                          </dl> : <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Historical item discount allocation is unavailable.</p>;
+                        })()}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -141,7 +156,7 @@ async function OrderDetailsContent({ params }) {
                 <div className="flex justify-between gap-4"><dt className="text-[var(--color-text-secondary)]">Subtotal</dt><dd>{formatAmount(order.subtotal, order.currency)}</dd></div>
                 <div className="flex justify-between gap-4"><dt className="text-[var(--color-text-secondary)]">Delivery fee</dt><dd>{formatAmount(order.shipping_fee_amount ?? order.shipping_amount, order.currency)}</dd></div>
                 {Number(order.shipping_discount_amount) > 0 && <div className="flex justify-between gap-4 text-[var(--color-success)]"><dt>Shipping discount</dt><dd>−{formatAmount(order.shipping_discount_amount, order.currency)}</dd></div>}
-                <div className="flex justify-between gap-4"><dt className="text-[var(--color-text-secondary)]">Discount</dt><dd>−{formatAmount(order.discount_amount, order.currency)}</dd></div>
+                <div className="flex justify-between gap-4"><dt className="text-[var(--color-text-secondary)]">Total promotion discount</dt><dd>−{formatAmount(order.discount_amount, order.currency)}</dd></div>
                 <div className="flex justify-between gap-4 border-t border-[var(--color-border)] pt-3 text-base font-bold"><dt>Total</dt><dd>{formatAmount(order.total_amount, order.currency)}</dd></div>
               </dl>
             </section>
@@ -175,18 +190,18 @@ async function OrderDetailsContent({ params }) {
               <h2 id="payment-heading" className="mb-3 font-editorial text-xl font-semibold">Payment</h2>
               <p className="text-sm">{order.payment_method === "cod" ? "Cash on delivery" : order.payment_method}</p>
               <p className="mt-1 text-xs capitalize text-[var(--color-text-secondary)]">{order.payment_status}</p>
-              <WhatsAppAction className="mt-4" templateId="order.status" variables={{ orderReference: order.order_number }} >Ask About This Order</WhatsAppAction>
+              <WhatsAppAction className="mt-4" templateId="order.status" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }} >Ask About This Order</WhatsAppAction>
               <details className="mt-4 rounded-2xl border border-[var(--color-border)] p-4">
                 <summary className="cursor-pointer text-sm font-semibold text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-primary)]">More order support options</summary>
                 <div className="mt-4 flex flex-wrap gap-3">
-                  <WhatsAppAction templateId="order.confirmation" variables={{ orderReference: order.order_number }}>Ask About Confirmation</WhatsAppAction>
-                  <WhatsAppAction templateId="order.existing" variables={{ orderReference: order.order_number }}>General order question</WhatsAppAction>
-                  <WhatsAppAction templateId="order.change" variables={{ orderReference: order.order_number }}>Ask about a change</WhatsAppAction>
-                  <WhatsAppAction templateId="order.cancel" variables={{ orderReference: order.order_number }}>Ask about cancellation</WhatsAppAction>
-                  <WhatsAppAction templateId="order.delivery" variables={{ orderReference: order.order_number }}>Report a delivery issue</WhatsAppAction>
-                  <WhatsAppAction templateId="order.item_issue" variables={{ orderReference: order.order_number }}>Report an item issue</WhatsAppAction>
+                  <WhatsAppAction templateId="order.confirmation" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }}>Ask About Confirmation</WhatsAppAction>
+                  <WhatsAppAction templateId="order.existing" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }}>General order question</WhatsAppAction>
+                  <WhatsAppAction templateId="order.change" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }}>Ask about a change</WhatsAppAction>
+                  <WhatsAppAction templateId="order.cancel" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }}>Ask about cancellation</WhatsAppAction>
+                  <WhatsAppAction templateId="order.delivery" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order) }}>Report a delivery issue</WhatsAppAction>
+                  <WhatsAppAction templateId="order.item_issue" variables={{ orderReference: order.order_number, orderContext: buildWhatsAppOrderContext(order), productName: order.items?.[0]?.product_name_snapshot ?? "Product not selected", issueCategory: "Not specified yet", requestedAction: "Review the issue and contact me with the next steps." }}>Report an item issue</WhatsAppAction>
                 </div>
-                <p className="mt-3 text-xs text-[var(--color-text-secondary)]">WhatsApp opens a prepared message for you to review and send. No message is sent automatically.</p>
+                <p className="mt-3 text-xs text-[var(--color-text-secondary)]">WhatsApp opens a prepared message for you to review and send. It may include this order’s date, items and quantities, prices and totals, payment status, delivery destination, and delivery notes. You choose whether to send it; nothing is sent automatically.</p>
               </details>
             </section>
           </aside>

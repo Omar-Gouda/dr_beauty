@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
 const STATUS_LABELS = {
   pending_confirmation: "Pending confirmation",
@@ -36,6 +37,7 @@ async function OrderHistoryContent() {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect(`/login?next=${encodeURIComponent("/orders")}`);
+  await redirectForPolicyAcceptance(supabase, "/orders");
 
   const { data: orders, error } = await supabase
     .from("orders")

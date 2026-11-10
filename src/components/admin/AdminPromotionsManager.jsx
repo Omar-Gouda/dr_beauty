@@ -1,8 +1,8 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Edit, Plus } from "lucide-react";
+import { Edit, Plus, Search, Trash2 } from "lucide-react";
 import Button from "@/components/ui/Button";
 import AccessibleDialog from "@/components/ui/AccessibleDialog";
 import CustomSelect from "@/components/ui/Select";
@@ -10,10 +10,9 @@ import PromotionTargetPicker from "@/components/admin/PromotionTargetPicker";
 import { useToast } from "@/constants/ToastContext";
 import { savePromotion, saveShippingSettings, setPromotionActive } from "@/app/admin/actions";
 import { buildDiscountCommunityMessage } from "@/lib/whatsapp/messages.mjs";
+import { countPromotionStatuses, filterAdminPromotions, getPromotionCapacity, getPromotionLifecycleStatus, getPromotionTargetSummary } from "@/lib/admin-promotions.mjs";
 
 const inputClass = "mt-1 min-h-12 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-background)] px-4 py-3 text-sm text-[var(--color-text)] outline-none focus-visible:border-[var(--color-rose)] focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]/20";
-const WHATSAPP_WEB_URL = "https://web.whatsapp.com/";
-
 function formatRedemptionCount(value) {
   const count = String(value ?? 0);
   return /^\d+$/.test(count) ? count : "0";
@@ -30,6 +29,23 @@ function RedemptionCounts({ promotion }) {
   );
 }
 
+function getPromotionStatusBadgeClass(promotion, now) {
+  const status = getPromotionLifecycleStatus(promotion, now);
+  if (status === "active") return "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]";
+  if (status === "scheduled") return "border-[var(--color-primary)]/30 bg-[var(--color-primary-light)] text-[var(--color-primary)]";
+  return "border-[var(--color-border)] text-[var(--color-text-secondary)]";
+}
+
+function RedemptionCapacity({ promotion }) {
+  const capacity = getPromotionCapacity(promotion);
+  return (
+    <div className="mt-1 space-y-1 text-[10px] text-[var(--color-text-secondary)]">
+      <p>Capacity {capacity.used} / {capacity.limit === null ? "unlimited" : capacity.limit}{capacity.remaining === null ? "" : ` · ${capacity.remaining} remaining · ${capacity.utilizationPercent}% used`}</p>
+      {capacity.limit !== null && <div role="meter" aria-label={`${promotion.code} redemption capacity used`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={capacity.utilizationPercent} className="h-1.5 overflow-hidden rounded-full bg-[var(--color-border)]"><div className="h-full rounded-full bg-[var(--color-primary)]" style={{ width: `${capacity.utilizationPercent}%` }} /></div>}
+    </div>
+  );
+}
+
 function utcInputValue(value) {
   return value ? new Date(value).toISOString().slice(0, 16) : "";
 }
@@ -38,12 +54,16 @@ function utcIsoValue(value) {
   return value ? `${value}:00.000Z` : "";
 }
 
-export default function AdminPromotionsManager({ promotions, productOptions = [], categoryOptions = [], shippingSettings }) {
+export default function AdminPromotionsManager({ promotions, productOptions = [], categoryOptions = [], shippingSettings, asOf, editPromotionId, channelUrl }) {
   const [editing, setEditing] = useState(null);
   const [discountType, setDiscountType] = useState("percentage");
   const [applicationScope, setApplicationScope] = useState("order");
   const [productTargetIds, setProductTargetIds] = useState([]);
   const [categoryTargetIds, setCategoryTargetIds] = useState([]);
+  const [tieredDiscountEnabled, setTieredDiscountEnabled] = useState(false);
+  const [discountTiers, setDiscountTiers] = useState([]);
+  const [promotionStatusFilter, setPromotionStatusFilter] = useState("all");
+  const [promotionSearch, setPromotionSearch] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [sharePromotion, setSharePromotion] = useState(null);
   const [shareFeedback, setShareFeedback] = useState("");
@@ -51,6 +71,13 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
   const [isPending, startTransition] = useTransition();
   const { showToast } = useToast();
   const router = useRouter();
+  const now = Date.parse(asOf) || 0;
+  const statusCounts = countPromotionStatuses(promotions, now);
+  const targetSummaryByPromotion = Object.fromEntries(promotions.map((promotion) => [
+    promotion.id,
+    getPromotionTargetSummary(promotion, productOptions, categoryOptions),
+  ]));
+  const visiblePromotions = filterAdminPromotions(promotions, { status: promotionStatusFilter, search: promotionSearch }, now, targetSummaryByPromotion);
   let shareMessage = "";
   if (sharePromotion) {
     try { shareMessage = buildDiscountCommunityMessage(sharePromotion); } catch { shareMessage = ""; }
@@ -76,6 +103,8 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
       maximumRedemptions: String(form.get("maximumRedemptions") ?? ""),
       perAccountRedemptionLimit: String(form.get("perAccountRedemptionLimit") ?? "1"),
       firstPurchaseOnly: form.get("firstPurchaseOnly") === "on",
+      tieredDiscountEnabled,
+      discountTiers,
       applicationScope,
       productTargetIds: ["products", "product_and_category"].includes(applicationScope) ? productTargetIds : [],
       categoryTargetIds: ["categories", "product_and_category"].includes(applicationScope) ? categoryTargetIds : [],
@@ -118,6 +147,8 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
     setApplicationScope("order");
     setProductTargetIds([]);
     setCategoryTargetIds([]);
+    setTieredDiscountEnabled(false);
+    setDiscountTiers([]);
     setIsOpen(true);
   }
 
@@ -127,8 +158,24 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
     setApplicationScope(promotion.application_scope ?? "order");
     setProductTargetIds(promotion.product_target_ids ?? []);
     setCategoryTargetIds(promotion.category_target_ids ?? []);
+    setTieredDiscountEnabled(promotion.tiered_discount_enabled === true);
+    setDiscountTiers((promotion.discount_tiers ?? []).map((tier) => ({
+      minimumSubtotal: String(tier.minimum_subtotal ?? ""),
+      discountType: tier.discount_type ?? "percentage",
+      discountValue: String(tier.discount_value ?? ""),
+      maximumDiscount: tier.maximum_discount == null ? "" : String(tier.maximum_discount),
+    })));
     setIsOpen(true);
   }
+
+  useEffect(() => {
+    if (!editPromotionId) return;
+    const promotion = promotions.find((item) => item.id === editPromotionId);
+    if (promotion) {
+      startTransition(() => openEditPromotion(promotion));
+      router.replace("/admin/promotions", { scroll: false });
+    }
+  }, [editPromotionId, promotions, router]);
 
   function submitShipping(event) {
     event.preventDefault();
@@ -152,7 +199,7 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
       {sharePromotion && <section className="space-y-4 rounded-3xl border border-[var(--color-primary)]/30 bg-[var(--color-primary-light)] p-5 sm:p-7" aria-labelledby="discount-share-heading">
         <div>
           <h2 id="discount-share-heading" className="font-editorial text-xl font-bold">Discount saved — ready to share</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">Copy the message, open WhatsApp, choose the Dr. Beauty Community, then paste and send it yourself. WhatsApp opens without a group selected, and nothing is posted automatically.</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">Copy the message, open the Dr. Beauty WhatsApp Channel, then paste and publish it yourself. Nothing is posted automatically. Check the promotion schedule and activation before sharing.</p>
         </div>
         {shareMessage ? <textarea ref={shareMessageRef} aria-label="Prepared discount message" readOnly rows={Math.min(10, shareMessage.split("\n").length + 1)} value={shareMessage} className="w-full rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm leading-6 text-[var(--color-text)]" /> : <p role="alert" className="text-sm text-red-700">The saved discount details could not be prepared for sharing.</p>}
         <div className="flex flex-wrap items-center gap-3">
@@ -165,7 +212,7 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
               setShareFeedback("We could not copy the message automatically. It is selected above; copy it, then paste it into your community chat.");
             }
           }}>Copy discount message</Button>
-          <a href={WHATSAPP_WEB_URL} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-5 text-sm font-semibold text-[var(--color-primary)] hover:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">Open WhatsApp</a>
+          {channelUrl ? <a href={channelUrl} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-5 text-sm font-semibold text-[var(--color-primary)] hover:border-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">Open WhatsApp Channel</a> : <span className="self-center text-xs text-[var(--color-text-secondary)]">WhatsApp Channel link is not configured.</span>}
           <Button type="button" variant="outline" onClick={() => { setSharePromotion(null); setShareFeedback(""); }}>Close</Button>
         </div>
         {shareFeedback && <p role="status" className="text-sm text-[var(--color-text-secondary)]">{shareFeedback}</p>}
@@ -189,40 +236,53 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
         <Button type="button" onClick={openNewPromotion}><Plus className="h-4 w-4" /> Add Discount</Button>
       </div>
 
+      <section aria-label="Promotion overview" className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        {[["Active", "active"], ["Scheduled", "scheduled"], ["Expired", "expired"], ["Disabled", "disabled"]].map(([label, status]) => (
+          <button key={status} type="button" aria-pressed={promotionStatusFilter === status} onClick={() => setPromotionStatusFilter(promotionStatusFilter === status ? "all" : status)} className={`rounded-2xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)] ${promotionStatusFilter === status ? "border-[var(--color-primary)] bg-[var(--color-primary-light)]" : "border-[var(--color-border)] bg-[var(--color-surface)]"}`}>
+            <span className="block text-xs text-[var(--color-text-secondary)]">{label}</span><span className="mt-1 block font-editorial text-2xl font-bold">{statusCounts[status]}</span>
+          </button>
+        ))}
+      </section>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+        <label className="relative block text-xs font-semibold"><span className="sr-only">Search promotions</span><Search aria-hidden="true" size={17} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-[var(--color-text-secondary)]" /><input type="search" value={promotionSearch} onChange={(event) => setPromotionSearch(event.target.value)} placeholder="Search code, title, type, or scope" className={`${inputClass} pl-11`} /></label>
+        <CustomSelect id="promotion-status-filter" ariaLabel="Filter promotions by status" options={[{ value: "all", label: "All statuses" }, { value: "active", label: "Active" }, { value: "scheduled", label: "Scheduled" }, { value: "expired", label: "Expired" }, { value: "disabled", label: "Disabled" }]} value={promotionStatusFilter} onChange={setPromotionStatusFilter} />
+      </div>
+      <p role="status" aria-live="polite" className="text-xs text-[var(--color-text-secondary)]">Showing {visiblePromotions.length} of {promotions.length} promotions.</p>
+
       <div className="hidden overflow-hidden rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-sm lg:block">
         <div tabIndex={0} role="region" aria-label="Promotions table; scroll horizontally to view all columns" className="overflow-x-auto rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]"><table className="w-full border-collapse text-left text-xs">
           <thead><tr className="border-b border-[var(--color-border)] bg-[var(--color-background)]/50 text-[11px] uppercase text-[var(--color-text-secondary)]"><th className="p-4">Code</th><th className="p-4">Discount</th><th className="p-4">Eligibility</th><th className="p-4">Schedule</th><th className="p-4">Storefront</th><th className="p-4 text-right">Actions</th></tr></thead>
           <tbody className="divide-y divide-[var(--color-border)]">
-            {promotions.map((promotion) => <tr key={promotion.id}>
-              <td className="p-4"><p className="font-bold tracking-wide">{promotion.code}</p>{promotion.title && <p className="mt-1 text-xs">{promotion.title}{promotion.is_featured ? " · Featured" : ""}</p>}{promotion.description && <p className="mt-1 max-w-xs text-[10px] text-[var(--color-text-secondary)]">{promotion.description}</p>}</td>
+            {visiblePromotions.map((promotion) => <tr key={promotion.id}>
+              <td className="p-4"><p className="font-bold tracking-wide">{promotion.code}{promotion.tiered_discount_enabled ? <span className="ml-2 rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[9px] text-[var(--color-primary)]">Tiered</span> : null}</p>{promotion.title && <p className="mt-1 text-xs">{promotion.title}{promotion.is_featured ? " · Featured" : ""}</p>}{promotion.description && <p className="mt-1 max-w-xs text-[10px] text-[var(--color-text-secondary)]">{promotion.description}</p>}</td>
               <td className="p-4">{promotion.discount_type === "percentage" ? `${promotion.discount_value}%` : `EGP ${Number(promotion.discount_value).toFixed(2)}`}{promotion.maximum_discount != null && <p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">Maximum EGP {Number(promotion.maximum_discount).toFixed(2)}</p>}</td>
-              <td className="p-4"><p>{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</p><RedemptionCounts promotion={promotion} /></td>
+              <td className="p-4"><p>{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}; targets: {getPromotionTargetSummary(promotion, productOptions, categoryOptions)}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</p><p className="mt-1 text-[10px] text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</p><RedemptionCounts promotion={promotion} /><RedemptionCapacity promotion={promotion} /></td>
               <td className="p-4 text-[10px]">{promotion.starts_at ? new Date(promotion.starts_at).toLocaleString("en-EG", { timeZone: "UTC" }) : "No start"}<p className="mt-1">{promotion.ends_at ? `Until ${new Date(promotion.ends_at).toLocaleString("en-EG", { timeZone: "UTC" })} UTC` : "No expiry"}</p></td>
-              <td className="p-4"><span className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${promotion.is_active ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]" : "border-[var(--color-border)] text-[var(--color-text-secondary)]"}`}>{promotion.is_active ? "Active" : "Inactive"}</span><p className="mt-2 text-[10px] text-[var(--color-text-secondary)]">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}</p></td>
+              <td className="p-4"><span className={`rounded-full border px-3 py-1 text-[10px] font-semibold ${getPromotionStatusBadgeClass(promotion, now)}`}>{getPromotionLifecycleStatus(promotion, now)}</span><p className="mt-2 text-[10px] text-[var(--color-text-secondary)]">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}</p></td>
               <td className="p-4 text-right"><div className="flex justify-end gap-2"><Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => openEditPromotion(promotion)} aria-label={`Edit ${promotion.code}`}><Edit className="h-3.5 w-3.5" /><span className="sr-only">Edit</span></Button><Button type="button" variant="outline" size="sm" disabled={isPending} onClick={() => toggle(promotion)}>{promotion.is_active ? "Deactivate" : "Activate"}</Button></div></td>
             </tr>)}
-            {promotions.length === 0 && <tr><td colSpan="6" className="p-12 text-center text-[var(--color-text-secondary)]">No discount codes yet. Create one to make it available at checkout.</td></tr>}
+            {visiblePromotions.length === 0 && <tr><td colSpan="6" className="p-12 text-center text-[var(--color-text-secondary)]">{promotions.length === 0 ? "No discount codes yet. Create one to make it available at checkout." : "No promotions match this search and status filter."}</td></tr>}
           </tbody>
         </table></div>
       </div>
 
       <div className="space-y-3 lg:hidden">
-        {promotions.map((promotion) => (
+        {visiblePromotions.map((promotion) => (
           <article key={promotion.id} className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-4 shadow-sm">
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0">
-                <h3 className="break-all font-bold tracking-wide">{promotion.code}</h3>
+                <h3 className="break-all font-bold tracking-wide">{promotion.code}{promotion.tiered_discount_enabled ? <span className="ml-2 inline-block rounded-full bg-[var(--color-primary-light)] px-2 py-0.5 text-[9px] text-[var(--color-primary)]">Tiered</span> : null}</h3>
                 {promotion.title && <p className="mt-1 break-words text-sm font-medium">{promotion.title}{promotion.is_featured ? " · Featured" : ""}</p>}
                 {promotion.description && <p className="mt-1 break-words text-xs text-[var(--color-text-secondary)]">{promotion.description}</p>}
               </div>
-              <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-semibold ${promotion.is_active ? "border-[var(--color-success)]/30 bg-[var(--color-success)]/10 text-[var(--color-success)]" : "border-[var(--color-border)] text-[var(--color-text-secondary)]"}`}>{promotion.is_active ? "Active" : "Inactive"}</span>
+              <span className={`shrink-0 rounded-full border px-3 py-1 text-[10px] font-semibold ${getPromotionStatusBadgeClass(promotion, now)}`}>{getPromotionLifecycleStatus(promotion, now)}</span>
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-[var(--color-border)] pt-3 text-xs">
               <div><dt className="text-[var(--color-text-secondary)]">Discount</dt><dd className="mt-1 font-semibold">{promotion.discount_type === "percentage" ? `${promotion.discount_value}%` : `EGP ${Number(promotion.discount_value).toFixed(2)}`}{promotion.maximum_discount != null && <span className="block font-normal text-[var(--color-text-secondary)]">Maximum EGP {Number(promotion.maximum_discount).toFixed(2)}</span>}</dd></div>
-              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</span><span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</span><span className="block text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</span></dd></div>
+              <div><dt className="text-[var(--color-text-secondary)]">Eligibility</dt><dd className="mt-1">{promotion.application_scope === "order" ? "Minimum order subtotal" : "Minimum eligible subtotal"} EGP {Number(promotion.minimum_subtotal).toFixed(2)}<span className="block text-[var(--color-text-secondary)]">Scope: {promotion.application_scope ?? "order"}; targets: {getPromotionTargetSummary(promotion, productOptions, categoryOptions)}{promotion.first_purchase_only ? " Â· First purchase only" : ""}</span><span className="block text-[var(--color-text-secondary)]">{promotion.maximum_redemptions == null ? "Unlimited total uses" : `Up to ${promotion.maximum_redemptions} total uses`}</span><span className="block text-[var(--color-text-secondary)]">{promotion.per_account_redemption_limit == null ? "Unlimited per account" : `Up to ${promotion.per_account_redemption_limit} per account`}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Schedule</dt><dd className="mt-1">{promotion.starts_at ? new Date(promotion.starts_at).toLocaleString("en-EG", { timeZone: "UTC" }) : "No start"}<span className="block">{promotion.ends_at ? `Until ${new Date(promotion.ends_at).toLocaleString("en-EG", { timeZone: "UTC" })} UTC` : "No expiry"}</span></dd></div>
               <div><dt className="text-[var(--color-text-secondary)]">Storefront</dt><dd className="mt-1">{promotion.is_announcement ? `Announcement · priority ${promotion.announcement_priority}` : "Not announced"}<span className="block">{promotion.is_featured ? `Featured · priority ${promotion.display_priority}` : "Not featured"}</span></dd></div>
-              <div className="col-span-2"><dt className="text-[var(--color-text-secondary)]">Redemption history</dt><dd><RedemptionCounts promotion={promotion} /></dd></div>
+              <div className="col-span-2"><dt className="text-[var(--color-text-secondary)]">Redemption history</dt><dd><RedemptionCounts promotion={promotion} /><RedemptionCapacity promotion={promotion} /></dd></div>
             </dl>
             <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--color-border)] pt-3">
               <Button type="button" variant="secondary" size="sm" disabled={isPending} onClick={() => openEditPromotion(promotion)} aria-label={`Edit ${promotion.code}`}><Edit aria-hidden="true" className="h-3.5 w-3.5" />Edit</Button>
@@ -230,7 +290,7 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
             </div>
           </article>
         ))}
-        {promotions.length === 0 && <p className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-center text-sm text-[var(--color-text-secondary)]">No discount codes yet. Create one to make it available at checkout.</p>}
+        {visiblePromotions.length === 0 && <p className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 text-center text-sm text-[var(--color-text-secondary)]">{promotions.length === 0 ? "No discount codes yet. Create one to make it available at checkout." : "No promotions match this search and status filter."}</p>}
       </div>
 
       {isOpen && <AccessibleDialog onClose={() => setIsOpen(false)} labelledBy="promotion-editor-title">
@@ -248,6 +308,32 @@ export default function AdminPromotionsManager({ promotions, productOptions = []
           <label className="block text-xs font-semibold">Starts at (optional, UTC)<input name="startsAt" type="datetime-local" defaultValue={utcInputValue(editing?.starts_at)} className={inputClass} /></label>
           <label className="block text-xs font-semibold">Expires at (optional, UTC)<input name="endsAt" type="datetime-local" defaultValue={utcInputValue(editing?.ends_at)} className={inputClass} /></label>
         </div>
+        <section className="space-y-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-4" aria-labelledby="promotion-tiers-heading">
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            <input type="checkbox" checked={tieredDiscountEnabled} disabled={isPending} onChange={(event) => {
+              const enabled = event.target.checked;
+              setTieredDiscountEnabled(enabled);
+              if (enabled && discountTiers.length === 0) {
+                setDiscountTiers([{ minimumSubtotal: "0", discountType: "percentage", discountValue: "", maximumDiscount: "" }]);
+              } else if (!enabled && discountTiers.some((tier) => !tier.minimumSubtotal || !tier.discountValue)) {
+                setDiscountTiers([]);
+              }
+            }} className="accent-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]" />
+            Use tiered discounts
+          </label>
+          <p id="promotion-tiers-heading" className="text-xs leading-5 text-[var(--color-text-secondary)]">The highest threshold reached applies one discount. Tiers never stack. Thresholds use the eligible subtotal for targeted promotions. Disabling tiers keeps complete tier settings for later reactivation.</p>
+          {tieredDiscountEnabled && <div className="space-y-3">
+            {discountTiers.map((tier, index) => <div key={`tier-${index}`} className="grid items-end gap-3 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] p-3 sm:grid-cols-2">
+              <label className="block text-xs font-semibold">Minimum subtotal (EGP)<input aria-label={`Tier ${index + 1} minimum subtotal`} inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0" step="0.01" value={tier.minimumSubtotal} disabled={isPending} onChange={(event) => setDiscountTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, minimumSubtotal: event.target.value } : item))} className={inputClass} /></label>
+              <label className="grid gap-1.5 text-xs font-semibold"><span>Type</span><CustomSelect id={`promotion-tier-type-${index}`} ariaLabel={`Tier ${index + 1} discount type`} options={[{ value: "percentage", label: "Percentage" }, { value: "fixed_amount", label: "Fixed amount (EGP)" }]} value={tier.discountType} onChange={(value) => setDiscountTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, discountType: value } : item))} disabled={isPending} /></label>
+              <label className="block text-xs font-semibold">Discount<input aria-label={`Tier ${index + 1} discount`} inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0.01" step="0.01" value={tier.discountValue} disabled={isPending} onChange={(event) => setDiscountTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, discountValue: event.target.value } : item))} className={inputClass} /></label>
+              <label className="block text-xs font-semibold">Tier cap (optional)<input aria-label={`Tier ${index + 1} maximum discount`} inputMode="decimal" pattern="[0-9]+([.][0-9]{1,2})?" min="0.01" step="0.01" value={tier.maximumDiscount} disabled={isPending} onChange={(event) => setDiscountTiers((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, maximumDiscount: event.target.value } : item))} className={inputClass} /></label>
+              <Button type="button" variant="outline" aria-label={`Remove tier ${index + 1}`} disabled={isPending} onClick={() => setDiscountTiers((current) => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 size={16} /></Button>
+            </div>)}
+            <Button type="button" variant="secondary" disabled={isPending || discountTiers.length >= 25} onClick={() => setDiscountTiers((current) => [...current, { minimumSubtotal: "", discountType: "percentage", discountValue: "", maximumDiscount: "" }])}><Plus size={16} /> Add tier</Button>
+            {discountTiers.length === 0 && <p role="alert" className="text-xs text-red-700">Add at least one tier before saving.</p>}
+          </div>}
+        </section>
         {applicationScope === "products" || applicationScope === "product_and_category" ? <PromotionTargetPicker label="Target products" options={productOptions} selectedIds={productTargetIds} onChange={setProductTargetIds} disabled={isPending} /> : null}
         {applicationScope === "categories" || applicationScope === "product_and_category" ? <PromotionTargetPicker label="Target categories" options={categoryOptions} selectedIds={categoryTargetIds} onChange={setCategoryTargetIds} disabled={isPending} /> : null}
         {applicationScope === "product_and_category" && <p className="text-xs text-[var(--color-text-secondary)]">A product qualifies when it matches either a selected product or a selected category.</p>}

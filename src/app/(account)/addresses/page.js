@@ -6,6 +6,7 @@ import AddressBookManager from "@/components/account/AddressBookManager";
 import Container from "@/components/ui/Container";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
+import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
 async function AddressBookContent() {
   await connection();
@@ -17,6 +18,7 @@ async function AddressBookContent() {
   const supabase = await createClient();
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) redirect("/login?next=%2Faddresses");
+  await redirectForPolicyAcceptance(supabase, "/addresses");
 
   const { data: addresses, error } = await supabase
     .from("customer_addresses")

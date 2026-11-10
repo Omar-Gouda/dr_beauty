@@ -64,7 +64,7 @@ test("customer support, product, wishlist, order, and admin entry points use sha
   assert.match(adminAction, /currentOrder\.customer_phone/);
   assert.match(adminAction, /admin\.order_status/);
   assert.match(adminAction, /normalizeWhatsAppPhoneNumber\(currentOrder\.customer_phone\)/);
-  assert.match(consultation, /buildWhatsAppClickToChatUrl\(destination, "support\.request"/);
+  assert.match(consultation, /buildWhatsAppClickToChatUrl\(destination,[\s\S]*?support\.request/);
 });
 
 test("Address Book uses the shared account shell without its obsolete page-only navigation", async () => {
