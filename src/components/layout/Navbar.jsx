@@ -38,9 +38,14 @@ export default function Navbar({ mobileOnly = false, desktopOnly = false, initia
 
     try {
       const supabase = createClient();
-      ({ data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      ({ data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
         authEventReceived = true;
-        if (active) setSessionAuthenticated(Boolean(session?.user));
+        if (active) {
+          const isInitialSession = event === "INITIAL_SESSION";
+          setSessionAuthenticated(isInitialSession && initialAuthenticated !== null
+            ? initialAuthenticated
+            : Boolean(session?.user));
+        }
       }));
       supabase.auth.getUser().then(({ data: { user }, error }) => {
         if (active && !authEventReceived) setSessionAuthenticated(!error && Boolean(user));
@@ -143,17 +148,10 @@ export default function Navbar({ mobileOnly = false, desktopOnly = false, initia
           </div>
 
           <div className="flex shrink-0 items-center gap-2 text-[var(--color-text)]">
-            {authenticated === true ? (
+            {authenticated === true && (
               <Link href="/profile" className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors hover:text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">
                 <User aria-hidden="true" className="h-5 w-5" />
               </Link>
-            ) : authenticated === false ? (
-              <div className="flex items-center gap-3">
-                <Link href="/login" className="inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-medium transition-colors hover:text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">Sign In</Link>
-                <Link href="/register" className="inline-flex min-h-11 items-center rounded-full bg-[var(--color-primary)] px-4 text-sm font-semibold text-white transition-colors hover:bg-[var(--color-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)] focus-visible:ring-offset-2">Create Account</Link>
-              </div>
-            ) : (
-              <span role="status" className="px-3 text-sm text-[var(--color-text-secondary)]">Checking account…</span>
             )}
             <Link href="/wishlist" aria-label="Wishlist" className="relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors hover:text-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">
               <Heart className="h-5 w-5" />

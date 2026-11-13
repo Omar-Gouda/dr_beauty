@@ -10,6 +10,7 @@ const notices = {
   "sign-out-failed": "We couldn't confirm sign-out. Your session may still be active; please try again.",
   welcome: "Your account is ready.",
   "confirmation-failed": "That confirmation link is invalid or has expired. Please try again.",
+  "recovery-failed": "That password reset could not be verified. Request a new reset email and open its link in this browser.",
 };
 
 async function LoginFormFromUrl({ searchParams }) {
@@ -19,6 +20,7 @@ async function LoginFormFromUrl({ searchParams }) {
   const hasValidNext = isSafeNext(requestedNext);
   const access = await getAdminAccess();
   if (access.status === "authorized") redirect(hasValidNext ? requestedNext : "/admin");
+  if (access.status === "forbidden") redirect(hasValidNext ? requestedNext : "/profile");
 
   return (
     <AuthForm

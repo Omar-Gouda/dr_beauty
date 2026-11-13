@@ -50,7 +50,7 @@ function Field({ id, name = id, label, type = "text", autoComplete, required = t
   );
 }
 
-function PasswordField({ id = "password", label, autoComplete, showForgotLink = false }) {
+export function PasswordField({ id = "password", name = id, label, autoComplete, showForgotLink = false }) {
   const [visible, setVisible] = useState(false);
   return (
     <div className="auth-field">
@@ -61,7 +61,7 @@ function PasswordField({ id = "password", label, autoComplete, showForgotLink = 
       <div className="auth-password-wrap">
         <input
           id={id}
-          name={id}
+          name={name}
           type={visible ? "text" : "password"}
           autoComplete={autoComplete}
           required

@@ -70,7 +70,7 @@ test("archive schema is private, immutable, independent of operational foreign k
     readdir(new URL("../supabase/migrations/", import.meta.url)),
   ]);
   const ordered = migrations.filter((name) => name.endsWith(".sql")).sort();
-  assert.equal(ordered.at(-1), "20261209000000_receipt_archive_before_order_retention.sql");
+  assert.ok(ordered.indexOf("20261209000000_receipt_archive_before_order_retention.sql") < ordered.indexOf("20261210000000_one_time_password_recovery_proofs.sql"));
   assert.match(migration, /create table private\.receipt_archive[\s\S]*?original_order_id uuid not null unique[\s\S]*?original_order_number bigint not null unique/);
   const archiveDdl = migration.match(/create table private\.receipt_archive \([\s\S]*?\n\);/i)?.[0] ?? "";
   assert.doesNotMatch(archiveDdl, /references\s+(?:public\.)?(?:orders|order_items|products|profiles)/i);

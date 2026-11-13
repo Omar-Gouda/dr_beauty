@@ -128,9 +128,10 @@ test("navbar renders account links from server-resolved auth state and keeps sig
   assert.match(sessionNavbar, /supabase\.auth\.getUser\(\)/);
   assert.match(sessionNavbar, /initialAuthenticated/);
   assert.match(navbar, /onAuthStateChange/);
-  assert.match(navbar, /authenticated === true \?/);
-  assert.match(desktop, /authenticated === false[\s\S]*?Sign In[\s\S]*?Create Account/);
-  assert.match(desktop, /authenticated === true[\s\S]*?My Account/);
+  assert.match(navbar, /authenticated === true &&/);
+  assert.doesNotMatch(desktop, /Sign In|Create Account|Sign Up/);
+  assert.match(desktop, /authenticated === true[\s\S]*?<User/);
+  assert.match(navbar.slice(navbar.indexOf("{mobileMenuOpen &&")), /Sign In[\s\S]*?Create Account/);
   assert.doesNotMatch(desktop, /Sign Out/);
   assert.match(mobile, /authenticated === true[\s\S]*?<MobileSignOutForm/);
   assert.match(signOut, /action=\{logout\}/);

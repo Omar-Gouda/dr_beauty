@@ -1,10 +1,16 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import { getAuthCallbackUrl } from "@/lib/site-url.mjs";
 import { CURRENT_PRIVACY_VERSION, CURRENT_TERMS_VERSION } from "@/lib/legal/policy-versions.mjs";
+import {
+  getRecoveryProofSecret,
+  readRecoveryProof,
+  RECOVERY_PROOF_COOKIE,
+} from "@/lib/auth/recovery-proof.server.mjs";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -124,6 +130,10 @@ export async function login(_previousState, formData) {
   }
 
   const supabase = await createClient();
+  const { data: existingSession } = await supabase.auth.getUser();
+  if (existingSession?.user) {
+    return { error: "You are already signed in. Sign out before using a different account." };
+  }
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) return { error: "Email or password is incorrect. Please try again." };
 
@@ -171,6 +181,14 @@ export async function register(_previousState, formData) {
 
   const registrationSensitiveValues = [email, phoneInput, phone, fullName, firstName, lastName, password, passwordConfirmation];
   const supabase = await runRegistrationStage("create_client", () => createClient(), registrationSensitiveValues);
+  const { data: existingSession } = await runRegistrationStage(
+    "existing_session_check",
+    () => supabase.auth.getUser(),
+    registrationSensitiveValues,
+  );
+  if (existingSession?.user) {
+    return { error: "You are already signed in. Sign out before creating another account." };
+  }
   let emailRedirectTo;
   logRegistrationStage("callback_url", "start");
   try {
@@ -284,10 +302,68 @@ export async function updatePassword(_previousState, formData) {
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return { error: "Your reset session has expired. Request a new reset email." };
 
-  const { error } = await supabase.auth.updateUser({ password });
-  if (error) return { error: "We could not update your password. Please try again." };
+  const cookieStore = await cookies();
+  const recoveryProof = cookieStore.get(RECOVERY_PROOF_COOKIE)?.value;
+  const verifiedProof = readRecoveryProof(recoveryProof, user.id, getRecoveryProofSecret());
+  if (!verifiedProof) {
+    cookieStore.delete(RECOVERY_PROOF_COOKIE);
+    return { error: "Open a current password reset link before choosing a new password." };
+  }
 
+  let consumption;
+  try {
+    consumption = await supabase.rpc("consume_auth_recovery_proof", {
+      p_nonce_digest: verifiedProof.nonceDigest,
+    });
+  } catch {
+    cookieStore.delete(RECOVERY_PROOF_COOKIE);
+    return { error: "We could not verify this reset link. Request a new password reset email before trying again." };
+  }
+  cookieStore.delete(RECOVERY_PROOF_COOKIE);
+  if (consumption.error || consumption.data !== true) {
+    return { error: "This reset link is invalid, expired, or already used. Request a new password reset email." };
+  }
+
+  let passwordUpdate;
+  try {
+    passwordUpdate = await supabase.auth.updateUser({ password });
+  } catch {
+    return { error: "This reset link was consumed, but the password update could not be confirmed. Request a new password reset email before trying again." };
+  }
+  if (passwordUpdate.error) {
+    return { error: "This reset link was consumed, but the password could not be updated. Request a new password reset email before trying again." };
+  }
   redirect("/profile?notice=password-updated");
+}
+
+export async function changePassword(_previousState, formData) {
+  const configurationMessage = missingConfigurationMessage();
+  if (configurationMessage) return { error: configurationMessage };
+
+  const currentPassword = typeof formData.get("currentPassword") === "string" ? formData.get("currentPassword") : "";
+  const password = typeof formData.get("password") === "string" ? formData.get("password") : "";
+  const passwordConfirmation = typeof formData.get("passwordConfirmation") === "string"
+    ? formData.get("passwordConfirmation")
+    : "";
+  if (!currentPassword || currentPassword.length > 256) return { error: "Enter your current password." };
+  if (password.length < 8 || password.length > 128) {
+    return { error: "Choose a new password between 8 and 128 characters." };
+  }
+  if (password !== passwordConfirmation) return { error: "The new passwords do not match." };
+  if (currentPassword === password) return { error: "Choose a new password that differs from your current password." };
+
+  const supabase = await createClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user?.email) return { error: "Your sign-in session has expired. Sign in again before changing your password." };
+
+  const { error: updateError } = await supabase.auth.updateUser({
+    password,
+    current_password: currentPassword,
+  });
+  if (updateError) {
+    return { error: "We could not verify your current password or update your password. Check it and try again." };
+  }
+  return { success: "Your password has been updated." };
 }
 
 export async function updateProfile(_previousState, formData) {
@@ -448,6 +524,13 @@ export async function logout() {
     } catch {
       failed = true;
     }
+  }
+
+  try {
+    const cookieStore = await cookies();
+    cookieStore.delete(RECOVERY_PROOF_COOKIE);
+  } catch {
+    // The server-side Supabase sign-out still determines the logout result.
   }
 
   redirect(failed ? "/login?notice=sign-out-failed" : "/login?notice=signed-out");

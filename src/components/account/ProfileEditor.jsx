@@ -4,6 +4,7 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateProfile } from "@/app/(account)/actions";
 import Button from "@/components/ui/Button";
+import ChangePasswordForm from "@/components/account/ChangePasswordForm";
 
 const inputClassName = "min-h-12 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] transition focus:border-[var(--color-rose)] focus:outline-none focus:ring-2 focus:ring-[var(--color-rose)]/20";
 
@@ -93,7 +94,7 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
             <div className="grid gap-2 sm:col-span-2">
               <label htmlFor="profile-email" className="text-sm font-medium text-[var(--color-text)]">Email</label>
               <input id="profile-email" type="email" value={email} readOnly aria-describedby="profile-email-help" className={`${inputClassName} cursor-not-allowed opacity-75`} />
-              <p id="profile-email-help" className="text-xs text-[var(--color-text-secondary)]">Email is managed by Supabase Auth. Use account recovery for password changes.</p>
+              <p id="profile-email-help" className="text-xs text-[var(--color-text-secondary)]">Email is managed by Supabase Auth and cannot be changed here.</p>
             </div>
             <label htmlFor="profile-public-ranking" className="flex items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-4 sm:col-span-2">
               <input
@@ -112,6 +113,7 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
           </div>
         </form>
       )}
+      <ChangePasswordForm />
     </div>
   );
 }
