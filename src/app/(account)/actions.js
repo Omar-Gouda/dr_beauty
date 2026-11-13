@@ -44,6 +44,51 @@ function missingConfigurationMessage() {
     : null;
 }
 
+function registrationErrorDetails(error, sensitiveValues = []) {
+  const code = typeof error?.code === "string" && /^[a-zA-Z0-9_-]{1,80}$/.test(error.code)
+    ? error.code
+    : "unavailable";
+  const status = Number.isInteger(error?.status) && error.status >= 100 && error.status <= 599
+    ? error.status
+    : null;
+  let message = typeof error?.message === "string" ? error.message : "Unexpected error";
+  for (const value of sensitiveValues) {
+    if (typeof value === "string" && value.length >= 3) message = message.split(value).join("[redacted]");
+  }
+  message = message
+    .replace(/[\w.+-]+@[\w.-]+\.[a-zA-Z]{2,}/g, "[redacted email]")
+    .replace(/\+?\d[\d\s().-]{7,}\d/g, "[redacted phone]")
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/gi, "[redacted id]")
+    .replace(/\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}(?:\.[a-zA-Z0-9_-]{8,})?\b/g, "[redacted token]")
+    .replace(/\b(?=[a-zA-Z0-9_-]{32,}\b)(?=[a-zA-Z0-9_-]*[a-zA-Z])(?=[a-zA-Z0-9_-]*\d)[a-zA-Z0-9_-]+\b/g, "[redacted credential]")
+    .replace(/[\r\n\t\0-\x1f\x7f]+/g, " ")
+    .slice(0, 240)
+    .trim();
+  return { code, status, message: message || "Unexpected error" };
+}
+
+// Temporary registration diagnostics. Remove after the production failure is identified.
+function logRegistrationStage(stage, outcome, details) {
+  const label = `[auth-register] stage=${stage} outcome=${outcome}`;
+  if (details) {
+    console.error(label, details);
+  } else {
+    console.info(label);
+  }
+}
+
+async function runRegistrationStage(stage, operation, sensitiveValues) {
+  logRegistrationStage(stage, "start");
+  try {
+    const result = await operation();
+    logRegistrationStage(stage, "complete");
+    return result;
+  } catch (error) {
+    logRegistrationStage(stage, "threw", registrationErrorDetails(error, sensitiveValues));
+    throw error;
+  }
+}
+
 function safePath(value, fallback = "/profile") {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.includes("\\")) {
     return fallback;
@@ -124,14 +169,18 @@ export async function register(_previousState, formData) {
     return { error: "Please accept the Terms & Conditions and Privacy Policy to create an account." };
   }
 
-  const supabase = await createClient();
+  const registrationSensitiveValues = [email, phoneInput, phone, fullName, firstName, lastName, password, passwordConfirmation];
+  const supabase = await runRegistrationStage("create_client", () => createClient(), registrationSensitiveValues);
   let emailRedirectTo;
+  logRegistrationStage("callback_url", "start");
   try {
     emailRedirectTo = getAuthCallbackUrl("/profile");
-  } catch {
+    logRegistrationStage("callback_url", "complete");
+  } catch (error) {
+    logRegistrationStage("callback_url", "threw", registrationErrorDetails(error, registrationSensitiveValues));
     return { error: "Registration is temporarily unavailable. Please try again later." };
   }
-  const { data, error } = await supabase.auth.signUp({
+  const { data, error } = await runRegistrationStage("sign_up", () => supabase.auth.signUp({
     email,
     password,
     options: {
@@ -144,22 +193,43 @@ export async function register(_previousState, formData) {
       },
       emailRedirectTo,
     },
-  });
+  }), registrationSensitiveValues);
 
   if (error) {
+    logRegistrationStage("sign_up", "error_returned", {
+      hasUser: Boolean(data?.user),
+      hasSession: Boolean(data?.session),
+      ...registrationErrorDetails(error, registrationSensitiveValues),
+    });
     return { error: "We could not complete registration right now. Please try again." };
   }
+  logRegistrationStage("sign_up", "result", {
+    hasUser: Boolean(data?.user),
+    hasSession: Boolean(data?.session),
+  });
   if (data.session) {
-    const { data: authData, error: authError } = await supabase.auth.getUser();
+    const { data: authData, error: authError } = await runRegistrationStage(
+      "get_user_after_sign_up",
+      () => supabase.auth.getUser(),
+      registrationSensitiveValues,
+    );
+    logRegistrationStage("get_user_after_sign_up", authError ? "error_returned" : "result", {
+      hasUser: Boolean(authData?.user),
+      ...(authError ? registrationErrorDetails(authError, registrationSensitiveValues) : {}),
+    });
     if (authError || !authData.user || authData.user.id !== data.user?.id) {
       return { error: "Your account was created, but we could not verify the session. Sign in to continue." };
     }
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await runRegistrationStage("profile_phone_update", () => supabase
       .from("profiles")
       .update({ phone })
       .eq("id", authData.user.id)
       .select("id")
-      .maybeSingle();
+      .maybeSingle(), registrationSensitiveValues);
+    logRegistrationStage("profile_phone_update", profileError ? "error_returned" : "result", {
+      hasProfile: Boolean(profile),
+      ...(profileError ? registrationErrorDetails(profileError, registrationSensitiveValues) : {}),
+    });
     if (profileError || !profile) {
       return { error: "Your account was created, but your phone could not be saved. Sign in and add it in your profile." };
     }
