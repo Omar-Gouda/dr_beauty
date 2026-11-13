@@ -150,7 +150,7 @@ test("authenticated password change passes the current password to Supabase for 
   const [actions, form, profile] = await Promise.all([
     read("../src/app/(account)/actions.js"),
     read("../src/components/account/ChangePasswordForm.jsx"),
-    read("../src/components/account/ProfileEditor.jsx"),
+    read("../src/app/(account)/profile/page.js"),
   ]);
   const changeAction = actions.match(/export async function changePassword[\s\S]*?(?=export async function updateProfile)/)?.[0] ?? "";
   assert.match(changeAction, /supabase\.auth\.getUser\(\)/);
@@ -159,7 +159,7 @@ test("authenticated password change passes the current password to Supabase for 
   assert.match(form, /currentPassword/);
   assert.match(form, /submittingRef/);
   assert.match(form, /disabled=\{pending\}/);
-  assert.match(profile, /<ChangePasswordForm\s*\/>/);
+  assert.match(profile, /<ChangePasswordForm email=\{user\.email \?\? ""\}\s*\/>/);
 });
 
 test("logged-in users leave login/register pages and server actions protect against accidental account switching", async () => {
@@ -175,7 +175,7 @@ test("logged-in users leave login/register pages and server actions protect agai
   assert.match(actions, /already signed in\. Sign out before creating another account/);
 });
 
-test("desktop navbar removes logged-out account buttons while footer and mobile routes remain", async () => {
+test("desktop navbar keeps the account icon without adding logged-out text buttons", async () => {
   const [navbar, footer] = await Promise.all([
     read("../src/components/layout/Navbar.jsx"),
     read("../src/components/layout/Footer.jsx"),
@@ -183,7 +183,8 @@ test("desktop navbar removes logged-out account buttons while footer and mobile 
   const desktop = navbar.slice(navbar.indexOf("{/* Desktop Navigation Links */}"), navbar.indexOf("<div className=\"lg:hidden\">"));
   const mobile = navbar.slice(navbar.indexOf("{mobileMenuOpen &&"));
   assert.doesNotMatch(desktop, /Sign In|Create Account/);
-  assert.match(desktop, /authenticated === true &&[\s\S]*?<User/);
+  assert.match(desktop, /href=\{accountHref\}[\s\S]*?<User aria-hidden="true"/);
+  assert.match(navbar, /const accountHref = authenticated \? "\/profile" : "\/login"/);
   assert.match(mobile, /Sign In[\s\S]*?Create Account/);
   assert.match(footer, /href: "\/login", label: "My Account"/);
   assert.match(footer, /href: "\/register", label: "Create Account"/);

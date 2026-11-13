@@ -4,7 +4,6 @@ import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { updateProfile } from "@/app/(account)/actions";
 import Button from "@/components/ui/Button";
-import ChangePasswordForm from "@/components/account/ChangePasswordForm";
 
 const inputClassName = "min-h-12 w-full rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm text-[var(--color-text)] transition focus:border-[var(--color-rose)] focus:outline-none focus:ring-2 focus:ring-[var(--color-rose)]/20";
 
@@ -113,7 +112,6 @@ export default function ProfileEditor({ defaults, email, notice = "" }) {
           </div>
         </form>
       )}
-      <ChangePasswordForm />
     </div>
   );
 }

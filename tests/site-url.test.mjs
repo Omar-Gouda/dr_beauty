@@ -48,7 +48,7 @@ test("auth actions keep the custom redirect options and confirmation template li
   ]);
 
   assert.match(actions, /emailRedirectTo,/);
-  assert.match(actions, /resetPasswordForEmail\(email, \{ redirectTo \}\)/);
+  assert.match(actions, /resetPasswordForEmail\(email, \{ redirectTo, captchaToken \}\)/);
   assert.match(confirmationRoute, /exchangeCodeForSession\(code\)/);
   assert.match(confirmationRoute, /verifyOtp\(\{ token_hash: tokenHash, type \}\)/);
   assert.match(emailTemplate, /href="\{\{ \.ConfirmationURL \}\}"/);

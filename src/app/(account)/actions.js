@@ -11,6 +11,7 @@ import {
   readRecoveryProof,
   RECOVERY_PROOF_COOKIE,
 } from "@/lib/auth/recovery-proof.server.mjs";
+import { getTurnstileToken, TURNSTILE_TOKEN_ERROR } from "@/lib/auth/turnstile-token.mjs";
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -128,13 +129,15 @@ export async function login(_previousState, formData) {
   if (!validEmail(email) || password.length < 1 || password.length > 256) {
     return { error: "Enter a valid email and password." };
   }
+  const captchaToken = getTurnstileToken(formData);
+  if (!captchaToken) return { error: TURNSTILE_TOKEN_ERROR };
 
   const supabase = await createClient();
   const { data: existingSession } = await supabase.auth.getUser();
   if (existingSession?.user) {
     return { error: "You are already signed in. Sign out before using a different account." };
   }
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signInWithPassword({ email, password, options: { captchaToken } });
   if (error) return { error: "Email or password is incorrect. Please try again." };
 
   const requestedNext = readText(formData, "next");
@@ -178,8 +181,10 @@ export async function register(_previousState, formData) {
   if (readText(formData, "policyConsent") !== "accepted") {
     return { error: "Please accept the Terms & Conditions and Privacy Policy to create an account." };
   }
+  const captchaToken = getTurnstileToken(formData);
+  if (!captchaToken) return { error: TURNSTILE_TOKEN_ERROR };
 
-  const registrationSensitiveValues = [email, phoneInput, phone, fullName, firstName, lastName, password, passwordConfirmation];
+  const registrationSensitiveValues = [email, phoneInput, phone, fullName, firstName, lastName, password, passwordConfirmation, captchaToken];
   const supabase = await runRegistrationStage("create_client", () => createClient(), registrationSensitiveValues);
   const { data: existingSession } = await runRegistrationStage(
     "existing_session_check",
@@ -210,6 +215,7 @@ export async function register(_previousState, formData) {
         accepted_privacy_version: CURRENT_PRIVACY_VERSION,
       },
       emailRedirectTo,
+      captchaToken,
     },
   }), registrationSensitiveValues);
 
@@ -265,6 +271,8 @@ export async function requestPasswordReset(_previousState, formData) {
 
   const email = readText(formData, "email").toLowerCase();
   if (!validEmail(email)) return { error: "Enter a valid email address." };
+  const captchaToken = getTurnstileToken(formData);
+  if (!captchaToken) return { error: TURNSTILE_TOKEN_ERROR };
 
   let redirectTo;
   try {
@@ -275,7 +283,7 @@ export async function requestPasswordReset(_previousState, formData) {
 
   try {
     const supabase = await createClient();
-    await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+    await supabase.auth.resetPasswordForEmail(email, { redirectTo, captchaToken });
   } catch {
     // Keep the response the same for existing and unknown addresses.
   }

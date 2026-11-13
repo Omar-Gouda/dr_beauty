@@ -114,7 +114,7 @@ test("customer rankings show only names and medal-style ranks in independent res
   assert.doesNotMatch(component, /[🏅🥇🥈🥉]/u);
 });
 
-test("navbar renders account links from server-resolved auth state and keeps sign out mobile-only", async () => {
+test("navbar renders a profile icon for signed-in and signed-out desktop states and keeps sign out mobile-only", async () => {
   const [navbar, sessionNavbar, signOut, storeLayout, accountLayout, checkoutLayout] = await Promise.all([
     read("../src/components/layout/Navbar.jsx"),
     read("../src/components/layout/SessionAwareNavbar.jsx"),
@@ -128,9 +128,10 @@ test("navbar renders account links from server-resolved auth state and keeps sig
   assert.match(sessionNavbar, /supabase\.auth\.getUser\(\)/);
   assert.match(sessionNavbar, /initialAuthenticated/);
   assert.match(navbar, /onAuthStateChange/);
-  assert.match(navbar, /authenticated === true &&/);
+  assert.match(navbar, /const accountHref = authenticated \? "\/profile" : "\/login"/);
+  assert.match(desktop, /<Link\s+href=\{accountHref\}[\s\S]*?aria-label=\{authenticated === true \? "My profile" : "Sign in"\}[\s\S]*?<User aria-hidden="true"/);
+  assert.doesNotMatch(desktop, /authenticated === true\s*&&/);
   assert.doesNotMatch(desktop, /Sign In|Create Account|Sign Up/);
-  assert.match(desktop, /authenticated === true[\s\S]*?<User/);
   assert.match(navbar.slice(navbar.indexOf("{mobileMenuOpen &&")), /Sign In[\s\S]*?Create Account/);
   assert.doesNotMatch(desktop, /Sign Out/);
   assert.match(mobile, /authenticated === true[\s\S]*?<MobileSignOutForm/);

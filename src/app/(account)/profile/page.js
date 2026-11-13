@@ -6,6 +6,7 @@ import Container from "@/components/ui/Container";
 import { createClient } from "@/lib/supabase/server";
 import { getMissingSupabaseEnv } from "@/lib/supabase/config";
 import ProfileEditor from "@/components/account/ProfileEditor";
+import ChangePasswordForm from "@/components/account/ChangePasswordForm";
 import { logout } from "@/app/(account)/actions";
 import { redirectForPolicyAcceptance } from "@/lib/legal/consent-gate";
 
@@ -162,8 +163,8 @@ async function ProfileContent({ searchParams }) {
 
           <section className="rounded-3xl border border-[var(--color-border)] bg-[var(--color-surface)] p-5 shadow-sm sm:p-8">
             <h2 className="font-editorial text-xl font-semibold text-[var(--color-text)]">Account security</h2>
-            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Update your password whenever you need to.</p>
-            <Link href="/forgot-password" className="mt-4 inline-block text-sm font-semibold text-[var(--color-primary)] hover:underline">Change password</Link>
+            <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Manage your password and recovery options.</p>
+            <div className="mt-5"><ChangePasswordForm email={user.email ?? ""} /></div>
             <div className="mt-6 border-t border-[var(--color-border)] pt-5">
               <p className="text-sm text-[var(--color-text-secondary)]">Finished managing your account?</p>
               <form action={logout} className="mt-3">

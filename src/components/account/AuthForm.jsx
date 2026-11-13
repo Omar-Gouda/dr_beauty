@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useActionState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import Button from "@/components/ui/Button";
+import TurnstileChallenge from "@/components/account/TurnstileChallenge";
 import {
   login,
   register,
@@ -83,6 +84,11 @@ export function PasswordField({ id = "password", name = id, label, autoComplete,
 
 export default function AuthForm({ mode, next = "/profile", defaults = {}, notice = "" }) {
   const [state, formAction, pending] = useActionState(actions[mode], null);
+  const requiresCaptcha = mode === "login" || mode === "register" || mode === "forgot";
+  const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaAttempted, setCaptchaAttempted] = useState(false);
+  const captchaRef = useRef(null);
+  const wasPending = useRef(false);
   const authStyle = mode !== "profile";
   const submitLabel = {
     login: "Log in",
@@ -92,8 +98,33 @@ export default function AuthForm({ mode, next = "/profile", defaults = {}, notic
     profile: "Save changes",
   }[mode];
 
+  useEffect(() => {
+    if (pending) {
+      wasPending.current = true;
+      return;
+    }
+    if (wasPending.current) {
+      wasPending.current = false;
+      captchaRef.current?.reset();
+      setCaptchaToken("");
+      setCaptchaAttempted(false);
+    }
+  }, [pending]);
+
+  function handleSubmit(event) {
+    if (requiresCaptcha && !captchaToken) {
+      event.preventDefault();
+      setCaptchaAttempted(true);
+    }
+  }
+
+  function handleCaptchaTokenChange(token) {
+    setCaptchaToken(token);
+    if (token) setCaptchaAttempted(false);
+  }
+
   return (
-    <form action={formAction} className={authStyle ? "auth-form" : "grid gap-5"} aria-busy={pending}>
+    <form action={formAction} onSubmit={handleSubmit} className={authStyle ? "auth-form" : "grid gap-5"} aria-busy={pending}>
       {mode === "login" && <input type="hidden" name="next" value={next} />}
       {notice && <p role="status" className={authStyle ? "auth-message" : "rounded-xl bg-[var(--color-primary-light)] px-4 py-3 text-sm text-[var(--color-text)]"}>{notice}</p>}
       {state?.error && <p role="alert" className={authStyle ? "auth-message auth-message-error" : "rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"}>{state.error}</p>}
@@ -147,7 +178,17 @@ export default function AuthForm({ mode, next = "/profile", defaults = {}, notic
         </div>
       )}
 
-      <Button type="submit" disabled={pending} size="md" className={authStyle ? "auth-submit shadow-md shadow-[var(--color-primary)]/20" : "mt-1 w-full shadow-md shadow-[var(--color-primary)]/20"}>
+      {requiresCaptcha && (
+        <>
+          <input type="hidden" name="captchaToken" value={captchaToken} readOnly />
+          <TurnstileChallenge ref={captchaRef} onTokenChange={handleCaptchaTokenChange} />
+          {captchaAttempted && !captchaToken && (
+            <p role="alert" className="auth-captcha-status auth-captcha-status-error">Complete the security check before continuing.</p>
+          )}
+        </>
+      )}
+
+      <Button type="submit" disabled={pending || (requiresCaptcha && !captchaToken)} size="md" className={authStyle ? "auth-submit shadow-md shadow-[var(--color-primary)]/20" : "mt-1 w-full shadow-md shadow-[var(--color-primary)]/20"}>
         {pending ? "Please wait…" : submitLabel}
       </Button>
 

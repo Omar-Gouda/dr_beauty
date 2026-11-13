@@ -148,11 +148,13 @@ export default function Navbar({ mobileOnly = false, desktopOnly = false, initia
           </div>
 
           <div className="flex shrink-0 items-center gap-2 text-[var(--color-text)]">
-            {authenticated === true && (
-              <Link href="/profile" className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors hover:text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">
-                <User aria-hidden="true" className="h-5 w-5" />
-              </Link>
-            )}
+            <Link
+              href={accountHref}
+              aria-label={authenticated === true ? "My profile" : "Sign in"}
+              className="inline-flex min-h-11 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors hover:text-[var(--color-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]"
+            >
+              <User aria-hidden="true" className="h-5 w-5" />
+            </Link>
             <Link href="/wishlist" aria-label="Wishlist" className="relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg transition-colors hover:text-[var(--color-primary)] focus-visible:ring-2 focus-visible:ring-[var(--color-rose)]">
               <Heart className="h-5 w-5" />
               {wishlistItems.length > 0 && (
